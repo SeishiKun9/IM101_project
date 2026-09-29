@@ -1,0 +1,494 @@
+.review-open {
+  overflow: hidden;
+}
+.review-backdrop,
+.client-detail-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: 22px;
+  background: rgba(23, 33, 31, 0.58);
+  backdrop-filter: blur(5px);
+}
+.review-backdrop[hidden] {
+  display: none;
+}
+.review-modal,
+.client-detail-modal section {
+  position: relative;
+  width: min(100%, 920px);
+  max-height: 92vh;
+  overflow: auto;
+  background: var(--paper);
+  padding: 34px;
+  border-radius: 7px;
+}
+.review-close {
+  position: absolute;
+  right: 16px;
+  top: 12px;
+  border: 0;
+  background: none;
+  font-size: 25px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.review-intro {
+  color: var(--muted);
+  font-size: 13px;
+}
+.case-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin: 24px 0;
+}
+.case-panel {
+  background: #fff;
+  border: 1px solid var(--line);
+  padding: 16px;
+}
+.case-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+.found-label {
+  color: var(--green);
+}
+.lost-label {
+  color: #9b7520;
+}
+.case-photo {
+  height: 110px;
+  margin: 12px 0;
+  background: var(--mint);
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 11px;
+}
+.case-photo img,
+.detail-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.case-panel h3 {
+  font-size: 16px;
+}
+.case-panel p,
+.case-panel dd {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+.case-panel dl {
+  font-size: 11px;
+}
+.case-panel dt {
+  font-weight: 700;
+  margin-top: 8px;
+}
+.case-panel dd {
+  margin: 2px 0;
+}
+.lost-candidate {
+  display: block;
+  padding: 10px;
+  border: 1px solid var(--line);
+  margin-top: 9px;
+  cursor: pointer;
+}
+.lost-candidate:has(input:checked) {
+  border-color: var(--green);
+  background: var(--mint);
+}
+.lost-candidate input {
+  margin-right: 8px;
+}
+.lost-candidate span {
+  display: block;
+}
+.review-modal form {
+  display: grid;
+  gap: 12px;
+}
+.review-modal label {
+  display: grid;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.review-modal input,
+.review-modal textarea {
+  border: 1px solid var(--line);
+  padding: 11px;
+  font: inherit;
+}
+.review-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+  margin-top: 8px;
+}
+.review-actions button {
+  border: 0;
+  cursor: pointer;
+  padding: 12px 15px;
+  border-radius: 4px;
+  font-weight: 700;
+}
+.client-detail-modal {
+  z-index: 12;
+}
+.client-detail-modal section {
+  width: min(100%, 520px);
+}
+.client-detail-modal h2 {
+  font-size: 28px;
+  margin-bottom: 14px;
+}
+.client-detail-modal .detail-image {
+  height: 230px;
+  margin-bottom: 16px;
+}
+.match-info {
+  color: var(--green);
+  font-size: 12px;
+  font-weight: 700;
+}
+.detail-note {
+  background: #f3ead5;
+  color: #80621d;
+  padding: 12px;
+  font-size: 12px;
+}
+@media (max-width: 700px) {
+  .case-columns {
+    grid-template-columns: 1fr;
+  }
+  .review-modal {
+    padding: 25px 18px;
+  }
+  .review-actions {
+    display: grid;
+  }
+  .record-side {
+    flex-wrap: wrap;
+  }
+}
+@import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;600;700&display=swap");
+:root {
+  --ink: #17211f;
+  --muted: #70807b;
+  --line: #dbe4df;
+  --paper: #f7f8f4;
+  --green: #1f6a58;
+  --mint: #dceee7;
+  --yellow: #f3c969;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "DM Sans", sans-serif;
+}
+header {
+  height: 76px;
+  background: #fff;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 clamp(24px, 8vw, 120px);
+}
+.brand {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  text-decoration: none;
+  color: var(--ink);
+  font: 700 15px "Space Grotesk";
+}
+.brand span {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  background: var(--green);
+  color: #fff;
+  font-size: 11px;
+}
+nav {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+}
+nav a,
+nav button {
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: 700 12px "DM Sans";
+  text-decoration: none;
+  cursor: pointer;
+}
+nav a.active {
+  color: var(--green);
+}
+main {
+  max-width: 1080px;
+  margin: auto;
+  padding: 70px 24px;
+}
+.eyebrow {
+  color: var(--green);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  margin: 0 0 14px;
+}
+h1,
+h2,
+h3 {
+  font-family: "Space Grotesk";
+  margin: 0;
+}
+h1 {
+  font-size: clamp(38px, 6vw, 68px);
+  letter-spacing: -2px;
+}
+.intro {
+  color: var(--muted);
+  max-width: 530px;
+  line-height: 1.6;
+  margin: 20px 0 28px;
+}
+.actions {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 58px;
+}
+.primary,
+.secondary {
+  display: inline-block;
+  padding: 13px 17px;
+  border-radius: 4px;
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 700;
+}
+.primary {
+  background: var(--green);
+  color: #fff;
+}
+.secondary {
+  border: 1px solid var(--line);
+  color: var(--ink);
+}
+.stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 42px;
+}
+.stats div {
+  background: #fff;
+  border: 1px solid var(--line);
+  padding: 20px;
+}
+.stats strong {
+  display: block;
+  color: var(--green);
+  font: 600 30px "Space Grotesk";
+}
+.stats span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.panel {
+  border-top: 1px solid var(--line);
+  padding-top: 24px;
+  margin-top: 30px;
+}
+.panel-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+.panel-head h2 {
+  font-size: 27px;
+}
+.panel-head > span {
+  font-size: 12px;
+  color: var(--muted);
+}
+.record {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  background: #fff;
+  border: 1px solid var(--line);
+  padding: 16px;
+  margin: 9px 0;
+}
+.record-main {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.record-main img,
+.record-icon {
+  width: 52px;
+  height: 52px;
+  object-fit: cover;
+  border-radius: 5px;
+}
+.record-icon {
+  display: grid;
+  place-items: center;
+  background: var(--mint);
+  font-size: 23px;
+  color: var(--green);
+}
+.tag {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+.tag.lost {
+  color: #a2761e;
+}
+.tag.found {
+  color: var(--green);
+}
+.record h3 {
+  font-size: 15px;
+  margin: 6px 0;
+}
+.record p,
+.record small {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  margin: 0 0 5px;
+}
+.record-side {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.status {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--green);
+  background: var(--mint);
+  padding: 7px 9px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+.status.found---verification-pending {
+  background: #fff0c9;
+  color: #80621d;
+}
+.status.rejected {
+  background: #fbe8e4;
+  color: #a34e43;
+}
+.status.complete {
+  background: #dcecf1;
+  color: #386a7a;
+}
+.record-side button {
+  border: 0;
+  border-radius: 3px;
+  padding: 9px 11px;
+  background: var(--yellow);
+  font-weight: 700;
+  font-size: 10px;
+  cursor: pointer;
+}
+.record-side button.reject {
+  background: #70413e;
+  color: #fff;
+}
+.empty {
+  border: 1px dashed var(--line);
+  padding: 35px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+@media (max-width: 700px) {
+  header {
+    padding: 0 18px;
+  }
+  nav a {
+    display: none;
+  }
+  main {
+    padding-top: 45px;
+  }
+  .stats {
+    grid-template-columns: 1fr;
+  }
+  .record {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .record-side {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
+
+/* The dialog owns vertical scrolling so the whole form stays reachable. */
+.review-modal {
+  max-height: calc(100vh - 44px);
+  max-height: calc(100dvh - 44px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+}
+.review-modal h2 {
+  font-size: 30px;
+  margin-bottom: 8px;
+}
+.case-columns {
+  align-items: start;
+}
+.case-panel {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+#lost-cases {
+  max-height: 360px;
+  overflow-y: auto;
+  padding-right: 6px;
+  scrollbar-width: thin;
+}
+.review-modal form {
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+.review-modal input,
+.review-modal textarea {
+  min-width: 0;
+  max-width: 100%;
+}
+.review-modal .lost-candidate {
+  display: block;
+}
+.review-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
