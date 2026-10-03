@@ -2,38 +2,22 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Administrator Workspace | Campus Lost & Found</title>
-    <link rel="stylesheet" href="/assets/css/portal.css" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Administrator Workspace</title>
+    <link rel="stylesheet" href="/assets/css/styles.css" />
   </head>
-  <body data-role="admin">
-    <header>
-      <a class="brand" href="/"><span>LF</span> Campus Lost & Found</a>
-      <nav>
-        <a href="/">Public board</a
-        ><a class="active" href="/administrator.html">Administrator workspace</a
-        ><button data-signout>Sign out</button>
-      </nav>
-    </header>
-    <main>
-      <p class="eyebrow">ADMINISTRATOR PORTAL</p>
-      <h1>System control center</h1>
-      <p class="intro">
-        Monitor records, verification activity, and the full campus handover
-        lifecycle.
-      </p>
-      <section class="stats" id="stats"></section>
-      <section class="panel">
-        <div class="panel-head">
-          <div>
-            <p class="eyebrow">ALL RECORDS</p>
-            <h2>System reports</h2>
-          </div>
-          <span id="record-count"></span>
-        </div>
-        <div id="records" class="records"></div>
-      </section>
-    </main>
-    <script src="/assets/js/portal.js"></script>
+  <body>
+    <div id="root"></div>
+    <script
+      crossorigin
+      src="https://unpkg.com/react@18/umd/react.development.js"
+    ></script>
+    <script
+      crossorigin
+      src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"
+    ></script>
+    <script src="/assets/js/api.js"></script>
+    <script src="/assets/js/components.js"></script>
+    <script src="/assets/js/app.js"></script>
   </body>
 </html>

@@ -14,10 +14,13 @@ Database-driven lost and found management for a campus, designed for the Advance
 1. Install Node.js 20+.
 2. Run `npm install`.
 3. Copy `.env.example` to `.env` and set a PostgreSQL-compatible cloud `DATABASE_URL`.
-4. Execute `db/001_init.sql` against the cloud database.
-5. Run `npm run dev`, then open `http://localhost:3000`.
+4. Execute `db/001_init.sql` against a new database. For an existing database, execute `db/002_workflow_security.sql` instead.
+5. Set `ADMIN_SETUP_TOKEN` to a long random value. This server-only value is required for the protected Administrator registration option.
+6. Run `npm run dev`, then open `http://localhost:3000`.
 
 The interface includes a static preview when the database is not configured. API health is available at `/api/health`.
+
+Public registration creates Client accounts. Administrator registration is accepted only with the server-side setup token. Verifier / CSA accounts can only be created by an authenticated Administrator from the Administrator dashboard; the backend rejects direct requests from other roles.
 
 ## Team workflow
 
