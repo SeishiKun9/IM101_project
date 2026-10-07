@@ -217,15 +217,28 @@ export default function ReviewWorkspace({ user, onChanged }) {
           queue.cases.map((caseItem) => (
             <article className="review-row" key={`case-${caseItem.id}`}>
               <div>
-                <strong>{caseItem.title}</strong>
+                <strong>
+                  {caseItem.lostTitle
+                    ? `Lost: "${caseItem.lostTitle}" ↔ Found: "${caseItem.title}"`
+                    : caseItem.title}
+                </strong>
                 <small>
-                  {caseItem.type.toUpperCase()} · {statusText(caseItem.status)}
+                  {caseItem.lostReporterName
+                    ? `Reporter: ${caseItem.lostReporterName}`
+                    : ""}
+                  {caseItem.finderName
+                    ? ` · Finder: ${caseItem.finderName}`
+                    : ""}
                 </small>
                 {caseItem.foundLocation && (
                   <small>Found at {caseItem.foundLocation}</small>
                 )}
               </div>
-              <span className="status">{statusText(caseItem.status)}</span>
+              <span
+                className={`status ${caseItem.status === "completed" ? "complete" : ""}`}
+              >
+                {statusText(caseItem.status)}
+              </span>
             </article>
           ))
         ) : (

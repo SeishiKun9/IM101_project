@@ -237,7 +237,7 @@ app.get(
   requireDatabase,
   asyncRoute(async (req, res) => {
     const values = [];
-    const where = ["i.item_type = 'lost'", "i.status = 'reported'"];
+    const where = [];
     if (req.query.search) {
       values.push(`%${String(req.query.search).trim()}%`);
       where.push(
@@ -248,12 +248,13 @@ app.get(
       values.push(req.query.type);
       where.push(`i.item_type = $${values.length}`);
     }
-    if (req.query.status) {
+    if (req.query.status && req.query.status !== "all") {
       values.push(req.query.status);
       where.push(`i.status = $${values.length}`);
     }
+    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
     const result = await pool.query(
-      `SELECT ${publicItemFields} FROM items i JOIN categories c ON c.category_id = i.category_id JOIN locations l ON l.location_id = i.location_id WHERE ${where.join(" AND ")} ORDER BY i.created_at DESC LIMIT 100`,
+      `SELECT ${publicItemFields} FROM items i JOIN categories c ON c.category_id = i.category_id JOIN locations l ON l.location_id = i.location_id ${whereSql} ORDER BY i.created_at DESC LIMIT 100`,
       values,
     );
     res.json(result.rows);
@@ -461,7 +462,20 @@ app.get(
       'SELECT cl.claim_id AS id, cl.status, cl.claim_date AS "claimDate", cl.reviewed_at AS "reviewedAt", cl.rejection_reason AS "rejectionReason", cl.item_id AS "itemId", u.name AS claimant, u.email, i.reporter_name AS "finderName", i.contact_phone AS "finderPhone" FROM claims cl JOIN users u ON u.user_id = cl.claimant_id JOIN items i ON i.item_id = cl.item_id ORDER BY cl.claim_date DESC',
     );
     const cases = await pool.query(
-      `SELECT ${publicItemFields}, i.reporter_name AS "privateReporterName", i.contact_phone AS "contactPhone", i.is_anonymous AS "isAnonymous", i.hide_phone AS "hidePhone" FROM items i JOIN categories c ON c.category_id = i.category_id JOIN locations l ON l.location_id = i.location_id WHERE i.status IN ('found', 'claimed', 'completed') AND (i.matched_lost_id IS NOT NULL OR i.matched_found_id IS NOT NULL) ORDER BY i.updated_at DESC`,
+      `SELECT ${publicItemFields}, 
+              i.reporter_name AS "privateReporterName", 
+              i.contact_phone AS "contactPhone", 
+              i.is_anonymous AS "isAnonymous", 
+              i.hide_phone AS "hidePhone",
+              lost_item.title AS "lostTitle",
+              lost_item.reporter_name AS "lostReporterName"
+       FROM items i 
+       JOIN categories c ON c.category_id = i.category_id 
+       JOIN locations l ON l.location_id = i.location_id 
+       LEFT JOIN items lost_item ON lost_item.item_id = i.matched_lost_id
+       WHERE (i.item_type = 'found' AND i.matched_lost_id IS NOT NULL AND i.status IN ('found', 'claimed', 'completed'))
+          OR (i.matched_lost_id IS NULL AND i.matched_found_id IS NULL AND i.status IN ('found', 'claimed', 'completed'))
+       ORDER BY i.updated_at DESC`,
     );
     res.json({
       items: items.rows,

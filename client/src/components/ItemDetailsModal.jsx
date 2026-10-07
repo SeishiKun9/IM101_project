@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { apiRequest } from "../api/client.js";
-import { statusText } from "../constants/statuses.js";
+import { statusMessage, statusText } from "../constants/statuses.js";
 
 export default function ItemDetailsModal({
   item,
@@ -16,6 +16,9 @@ export default function ItemDetailsModal({
   const displayName = showPrivate
     ? item.privateReporterName || item.reporterName
     : item.reporterName;
+
+  const isClosed = ["claimed", "completed"].includes(item.status);
+  const isFound = item.status === "found";
 
   const claimTargetId = item.type === "lost" ? item.matchedFoundId : item.id;
   const canClaim =
@@ -46,8 +49,29 @@ export default function ItemDetailsModal({
         <button className="modal-close" onClick={onClose}>
           ×
         </button>
-        <span className={`tag ${item.type}`}>{item.type.toUpperCase()}</span>
+        <div
+          style={{
+            display: "flex",
+            gap: "8px",
+            alignItems: "center",
+            marginBottom: "8px",
+          }}
+        >
+          <span className={`tag ${item.type}`}>
+            {item.type === "lost" ? "LOST REPORT" : "FOUND REPORT"}
+          </span>
+          <span
+            className={`status ${isClosed ? "complete" : isFound ? "found---verification-pending" : ""}`}
+          >
+            {statusText(item.status)}
+          </span>
+        </div>
         <h2>{item.title}</h2>
+        {statusMessage(item.status) && (
+          <div className="detail-note" style={{ margin: "10px 0 16px" }}>
+            {statusMessage(item.status)}
+          </div>
+        )}
 
         {item.image && (
           <img

@@ -668,6 +668,64 @@ body.modal-open {
 .detail-modal {
   width: min(100%, 700px);
 }
+.compare-modal {
+  width: min(100%, 940px);
+}
+.panel {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 24px;
+  margin-top: 20px;
+}
+.panel h3 {
+  font: 600 20px "Space Grotesk";
+  margin: 0 0 16px;
+  color: var(--ink);
+}
+.status {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--green);
+  background: var(--mint);
+  padding: 4px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.status.complete {
+  background: #dcecf1;
+  color: #386a7a;
+}
+.status.found---verification-pending {
+  background: #fff0c9;
+  color: #80621d;
+}
+.status.rejected {
+  background: #fbe8e4;
+  color: #a34e43;
+}
+button.secondary,
+.secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #fff;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: 700;
+  border-radius: 4px;
+  text-decoration: none;
+  transition: all 0.15s ease;
+}
+button.secondary:hover,
+.secondary:hover {
+  background: var(--paper);
+  border-color: var(--muted);
+}
 .detail-fields {
   display: grid;
   grid-template-columns: 145px minmax(0, 1fr);
