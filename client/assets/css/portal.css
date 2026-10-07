@@ -467,7 +467,13 @@ h1 {
 }
 .case-panel {
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+.case-panel h3 {
+  word-break: normal;
+  overflow-wrap: break-word;
+  hyphens: none;
 }
 #lost-cases {
   max-height: 360px;

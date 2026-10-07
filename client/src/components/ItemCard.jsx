@@ -6,64 +6,55 @@ export default function ItemCard({ item, onClaim, onView }) {
   const isFound = item.status === "found";
 
   return (
-    <article className="item-card clickable" onClick={() => onView(item)}>
-      {item.image ? (
-        <img className="item-thumb" src={item.image} alt={item.title} />
-      ) : (
-        <div className="item-icon green">
-          {item.type === "lost" ? "L" : "F"}
-        </div>
-      )}
-      <div className="item-copy">
-        <div
-          style={{
-            display: "flex",
-            gap: "6px",
-            alignItems: "center",
-            flexWrap: "wrap",
-          }}
-        >
+    <article
+      className={`item-card ${item.type} clickable`}
+      onClick={() => onView(item)}
+    >
+      <div className="item-card-header">
+        {item.image ? (
+          <img className="item-thumb" src={item.image} alt={item.title} />
+        ) : (
+          <div
+            className={`item-icon ${item.type === "lost" ? "gold" : "green"}`}
+          >
+            {item.type === "lost" ? "L" : "F"}
+          </div>
+        )}
+        <div className="item-card-badges">
           <span className={`tag ${item.type}`}>
             {item.type === "lost" ? "LOST" : "FOUND"}
           </span>
           <span
             className={`status ${isClosed ? "complete" : isFound ? "found---verification-pending" : ""}`}
-            style={{ fontSize: "9px", padding: "4px 6px" }}
           >
             {statusText(item.status)}
           </span>
         </div>
+      </div>
 
+      <div className="item-copy">
         <h3>{item.title}</h3>
-        <p>
+        <p className="item-location">
           {item.building ? `${item.building} · ` : ""}
           {item.location} · {item.floor}
         </p>
-        <small>
+        <small className="item-date">
           {item.date} · {statusText(item.status)}
         </small>
       </div>
-      <div
-        className="item-card-actions"
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: "8px",
-          alignItems: "flex-end",
-          justifyContent: "center",
-        }}
-      >
+
+      <div className="item-card-actions">
         {item.type === "found" &&
           item.eligibleToClaim !== false &&
           !isClosed && (
             <button
-              className="secondary compact"
+              className="primary compact"
               onClick={(event) => {
                 event.stopPropagation();
                 onClaim(item);
               }}
             >
-              Request this item
+              Request item
             </button>
           )}
         <button
