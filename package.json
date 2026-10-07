@@ -4,16 +4,23 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node --watch server/src/index.js",
-    "start": "node server/src/index.js",
-    "format": "prettier --write server/src/index.js client/assets/js client/*.html client/assets/css"
+    "dev": "concurrently \"vite --host 127.0.0.1\" \"node --watch server/src/index.js\"",
+    "start": "npm run build && node server/src/index.js",
+    "build": "vite build",
+    "format": "prettier --write server/src/index.js client/src/**/*.{js,jsx} client/*.html client/assets/css/*.css vite.config.js client/main.jsx"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.4.1",
+    "concurrently": "^9.1.2",
+    "prettier": "^3.9.9",
+    "vite": "^6.1.0"
   },
   "dependencies": {
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
-    "pg": "^8.13.1"
-  },
-  "devDependencies": {
-    "prettier": "^3.9.9"
+    "pg": "^8.13.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^7.18.4"
   }
 }

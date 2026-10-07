@@ -22,7 +22,7 @@ const pool = process.env.DATABASE_URL
   : null;
 
 app.use(express.json({ limit: "8mb" }));
-app.use(express.static(path.join(__dirname, "../../client")));
+app.use(express.static(path.join(__dirname, "../../client/dist")));
 
 const publicItemFields = `
   i.item_id AS id, i.item_type AS type, i.title, i.description,
@@ -558,11 +558,9 @@ app.patch(
         );
         if (item.item_type !== "found" || !lostResult.rows[0]) {
           await client.query("ROLLBACK");
-          return res
-            .status(409)
-            .json({
-              error: "Select an unresolved lost report for this review.",
-            });
+          return res.status(409).json({
+            error: "Select an unresolved lost report for this review.",
+          });
         }
         await client.query(
           "UPDATE items SET status = 'under_review', review_lost_id = $1 WHERE item_id = $2 AND matched_lost_id IS NULL",
