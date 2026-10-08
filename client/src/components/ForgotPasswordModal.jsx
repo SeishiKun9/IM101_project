@@ -49,66 +49,112 @@ export default function ForgotPasswordModal({ onClose, onBack }) {
   }
 
   return (
-    <div className="modal-backdrop">
+    <div
+      className="modal-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="forgot-modal-title"
+    >
       <section className="modal auth-modal">
-        <button className="modal-close" onClick={onClose}>
+        <button
+          className="modal-close"
+          onClick={onClose}
+          type="button"
+          aria-label="Close recovery dialog"
+        >
           ×
         </button>
-        <p className="eyebrow">ACCOUNT RECOVERY</p>
-        <h2>Forgot password</h2>
+
+        <div className="modal-header-tag">ACCOUNT RECOVERY</div>
+        <h2 id="forgot-modal-title" className="auth-modal-title">
+          Reset Your Password
+        </h2>
         <p className="modal-intro">
-          Request a time-limited reset token for any Client, Verifier, or
-          Administrator account.
+          Enter your registered school email to obtain a security reset token
+          for your Client, Verifier, or Administrator account.
         </p>
 
-        <form className="auth-form" onSubmit={requestReset}>
-          <label>
-            Account email
-            <input
-              type="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              required
-            />
-          </label>
-          <button className="primary full" disabled={submitting}>
-            {submitting ? "Requesting..." : "Request reset"}
-          </button>
-        </form>
+        {message && (
+          <div className="alert-banner alert-success">
+            <strong>Notice:</strong> {message}
+          </div>
+        )}
 
-        {message && <p className="auth-note">{message}</p>}
+        {error && (
+          <div className="alert-banner alert-danger">
+            <strong>Error:</strong> {error}
+          </div>
+        )}
 
-        {token && (
-          <form className="auth-form reset-form" onSubmit={resetPassword}>
-            <label>
-              Reset token
+        {!token ? (
+          <form className="auth-form" onSubmit={requestReset}>
+            <div className="form-group">
+              <label htmlFor="recovery-email">
+                Campus Email <span className="req">*</span>
+              </label>
               <input
+                id="recovery-email"
+                type="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                required
+                placeholder="name@school.edu"
+              />
+            </div>
+
+            <button
+              className="btn btn-primary btn-lg full"
+              disabled={submitting}
+              type="submit"
+            >
+              {submitting ? "Sending Request..." : "Request Reset Token"}
+            </button>
+          </form>
+        ) : (
+          <form className="auth-form" onSubmit={resetPassword}>
+            <div className="form-group">
+              <label htmlFor="reset-token">
+                Security Reset Token <span className="req">*</span>
+              </label>
+              <input
+                id="reset-token"
                 value={token}
                 onChange={(event) => setToken(event.target.value)}
                 required
+                placeholder="Enter reset token provided"
               />
-            </label>
-            <label>
-              New password
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="reset-new-password">
+                New Password <span className="req">*</span>
+              </label>
               <input
+                id="reset-new-password"
                 type="password"
                 minLength={6}
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 required
+                placeholder="Minimum 6 characters"
               />
-            </label>
-            <button className="primary full" disabled={submitting}>
-              {submitting ? "Resetting..." : "Reset password"}
+            </div>
+
+            <button
+              className="btn btn-primary btn-lg full"
+              disabled={submitting}
+              type="submit"
+            >
+              {submitting ? "Updating Password..." : "Set New Password"}
             </button>
           </form>
         )}
 
-        {error && <p className="auth-error">{error}</p>}
-
-        <button className="text-button" type="button" onClick={onBack}>
-          Back to sign in
-        </button>
+        <div className="modal-footer-nav">
+          <button className="link-btn" type="button" onClick={onBack}>
+            ← Back to Sign In
+          </button>
+        </div>
       </section>
     </div>
   );

@@ -1877,7 +1877,9 @@ function ImpactConfirmModal({
                             : "rooms"}
                         .
                         <br />
-                        Alternatively, choose <strong>Archive instead</strong>{" "}
+                        Alternatively, choose <strong>
+                          Archive instead
+                        </strong>{" "}
                         to safely remove it from future report dropdowns while
                         preserving all history.
                       </>

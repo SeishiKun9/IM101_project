@@ -36,6 +36,7 @@ export default function App() {
   const [authMode, setAuthMode] = useState("signin");
   const [forgotPasswordOpen, setForgotPasswordOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
+  const [initialReportType, setInitialReportType] = useState("lost");
   const [selectedItem, setSelectedItem] = useState(null);
   const [pendingAction, setPendingAction] = useState(null);
 
@@ -142,7 +143,24 @@ export default function App() {
                 setStatus={setStatus}
                 user={user}
                 userReports={reports}
-                onOpenReport={() => requireLogin(() => setReportOpen(true))}
+                onOpenReport={(reportType = "lost") =>
+                  requireLogin(() => {
+                    setInitialReportType(reportType);
+                    setReportOpen(true);
+                  })
+                }
+                onOpenLostReport={() =>
+                  requireLogin(() => {
+                    setInitialReportType("lost");
+                    setReportOpen(true);
+                  })
+                }
+                onOpenFoundReport={() =>
+                  requireLogin(() => {
+                    setInitialReportType("found");
+                    setReportOpen(true);
+                  })
+                }
                 onClaimItem={claimItem}
                 onSelectItem={setSelectedItem}
               />
@@ -155,7 +173,10 @@ export default function App() {
                 reports={reports}
                 onClaimItem={claimItem}
                 onSelectItem={setSelectedItem}
-                onOpenReport={() => setReportOpen(true)}
+                onOpenReport={(reportType = "lost") => {
+                  setInitialReportType(reportType);
+                  setReportOpen(true);
+                }}
                 onRequireLogin={() => {
                   setAuthMode("signin");
                   setAuthOpen(true);
@@ -246,6 +267,7 @@ export default function App() {
 
       {reportOpen && (
         <ReportFormModal
+          initialType={initialReportType}
           onClose={() => setReportOpen(false)}
           onSaved={() => {
             setReportOpen(false);

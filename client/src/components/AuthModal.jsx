@@ -36,99 +36,162 @@ export default function AuthModal({
   }
 
   return (
-    <div className="modal-backdrop">
+    <div
+      className="modal-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="auth-modal-title"
+    >
       <section className="modal auth-modal">
-        <button className="modal-close" onClick={onClose}>
+        <button
+          className="modal-close"
+          onClick={onClose}
+          type="button"
+          aria-label="Close authentication dialog"
+        >
           ×
         </button>
-        <p className="eyebrow">CAMPUS ACCESS</p>
-        <h2>
-          {mode === "signup" ? "Create an account" : "Sign in to continue"}
+
+        <div className="modal-header-tag">CAMPUS ACCESS</div>
+        <h2 id="auth-modal-title" className="auth-modal-title">
+          {mode === "signup" ? "Create Campus Account" : "Sign in to Continue"}
         </h2>
         <p className="modal-intro">
-          Client accounts can report items and track claims. Privileged access
-          is verified by the server.
+          Access your personal lost and found dashboard, register items, or
+          verify handover records.
         </p>
 
+        {/* Tab switch */}
         <div className="auth-tabs">
           <button
-            className={mode === "signin" ? "auth-tab active" : "auth-tab"}
-            onClick={() => setMode("signin")}
+            className={`auth-tab ${mode === "signin" ? "active" : ""}`}
+            onClick={() => {
+              setMode("signin");
+              setError("");
+            }}
             type="button"
           >
-            Sign in
+            Sign In
           </button>
           <button
-            className={mode === "signup" ? "auth-tab active" : "auth-tab"}
-            onClick={() => setMode("signup")}
+            className={`auth-tab ${mode === "signup" ? "active" : ""}`}
+            onClick={() => {
+              setMode("signup");
+              setError("");
+            }}
             type="button"
           >
-            Create account
+            Register Account
           </button>
         </div>
+
+        {error && (
+          <div className="alert-banner alert-danger">
+            <strong>Authentication notice:</strong> {error}
+          </div>
+        )}
 
         <form className="auth-form" onSubmit={submit}>
           {mode === "signup" && (
             <>
-              <label>
-                Full name
-                <input name="name" required />
-              </label>
+              <div className="form-group">
+                <label htmlFor="reg-name">
+                  Full Name <span className="req">*</span>
+                </label>
+                <input
+                  id="reg-name"
+                  name="name"
+                  required
+                  placeholder="e.g. Maria Santos"
+                  autoComplete="name"
+                />
+              </div>
 
-              <label>
-                Account type
+              <div className="form-group">
+                <label htmlFor="reg-type">Account Role</label>
                 <select
+                  id="reg-type"
                   name="accountType"
                   value={accountType}
                   onChange={(event) => setAccountType(event.target.value)}
                 >
-                  <option value="client">Client</option>
-                  <option value="admin">Administrator</option>
+                  <option value="client">Client (Student / Faculty)</option>
+                  <option value="admin">Administrator (Requires Token)</option>
                 </select>
-              </label>
+              </div>
 
               {accountType === "admin" && (
-                <label>
-                  Administrator setup authorization
+                <div className="form-group">
+                  <label htmlFor="reg-token">
+                    Administrator Setup Token <span className="req">*</span>
+                  </label>
                   <input
+                    id="reg-token"
                     name="setupToken"
                     type="password"
                     required
                     autoComplete="off"
+                    placeholder="Enter setup authorization token"
                   />
-                  <small>
-                    Use the authorization supplied by your system administrator.
-                  </small>
-                </label>
+                  <span className="field-hint">
+                    Authorized key supplied during system deployment.
+                  </span>
+                </div>
               )}
             </>
           )}
 
-          <label>
-            School email
-            <input name="email" type="email" required />
-          </label>
+          <div className="form-group">
+            <label htmlFor="auth-email">
+              Campus Email <span className="req">*</span>
+            </label>
+            <input
+              id="auth-email"
+              name="email"
+              type="email"
+              required
+              autoComplete="email"
+              placeholder="name@school.edu"
+            />
+          </div>
 
-          <label>
-            Password
-            <input name="password" type="password" minLength={6} required />
-          </label>
+          <div className="form-group">
+            <div className="label-with-action">
+              <label htmlFor="auth-password">
+                Password <span className="req">*</span>
+              </label>
+              {mode === "signin" && (
+                <button type="button" className="link-btn" onClick={onForgot}>
+                  Forgot password?
+                </button>
+              )}
+            </div>
+            <input
+              id="auth-password"
+              name="password"
+              type="password"
+              minLength={6}
+              required
+              autoComplete={
+                mode === "signup" ? "new-password" : "current-password"
+              }
+              placeholder="••••••••"
+            />
+          </div>
 
-          {error && <p className="auth-error">{error}</p>}
-
-          <button className="primary full" disabled={busy}>
+          <button
+            className="btn btn-primary btn-lg full"
+            disabled={busy}
+            type="submit"
+          >
             {busy
-              ? "Working..."
+              ? mode === "signup"
+                ? "Creating account..."
+                : "Signing in..."
               : mode === "signup"
-                ? "Create account"
-                : "Sign in"}
+                ? "Register Account"
+                : "Sign In"}
           </button>
-
-          {mode === "signin" && (
-            <button className="text-button" type="button" onClick={onForgot}>
-              Forgot password?
-            </button>
-          )}
         </form>
       </section>
     </div>
