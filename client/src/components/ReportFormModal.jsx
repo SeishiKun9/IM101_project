@@ -1,18 +1,63 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { apiRequest } from "../api/client.js";
-import { campusLocations } from "../constants/locations.js";
 
 export default function ReportFormModal({ onClose, onSaved }) {
   const [error, setError] = useState("");
   const [pin, setPin] = useState(null);
   const [imagePreview, setImagePreview] = useState("");
-  const [building, setBuilding] = useState("Scanlon");
-  const [floor, setFloor] = useState("Ground floor");
   const [reportType, setReportType] = useState("lost");
   const [submitting, setSubmitting] = useState(false);
 
-  const floorOptions = Object.keys(campusLocations[building] || {});
-  const roomOptions = campusLocations[building]?.[floor] || [];
+  // Dynamic location states
+  const [locations, setLocations] = useState([]);
+  const [selectedBuildingId, setSelectedBuildingId] = useState("");
+  const [selectedFloorId, setSelectedFloorId] = useState("");
+  const [selectedRoomId, setSelectedRoomId] = useState("");
+  const [locationDescription, setLocationDescription] = useState("");
+
+  // Map state
+  const [activeMap, setActiveMap] = useState(null);
+  const [loadingMap, setLoadingMap] = useState(true);
+
+  async function fetchLocations() {
+    try {
+      const data = await apiRequest("/locations");
+      setLocations(data);
+    } catch (err) {
+      setError(`Failed to load locations: ${err.message}`);
+    }
+  }
+
+  async function fetchActiveMap() {
+    try {
+      setLoadingMap(true);
+      const map = await apiRequest("/maps/active");
+      setActiveMap(map);
+    } catch {
+      setActiveMap(null);
+    } finally {
+      setLoadingMap(false);
+    }
+  }
+
+  useEffect(() => {
+    fetchLocations();
+    fetchActiveMap();
+  }, []);
+
+  const currentBuilding = locations.find(
+    (b) => String(b.id) === String(selectedBuildingId),
+  );
+  const availableFloors = currentBuilding?.floors || [];
+
+  const currentFloor = availableFloors.find(
+    (f) => String(f.id) === String(selectedFloorId),
+  );
+  const availableRooms = currentFloor?.rooms || [];
+
+  const currentRoom = availableRooms.find(
+    (r) => String(r.id) === String(selectedRoomId),
+  );
 
   function readImage(file) {
     if (!file || !file.size) return Promise.resolve("");
@@ -39,6 +84,7 @@ export default function ReportFormModal({ onClose, onSaved }) {
   }
 
   function handleMapClick(event) {
+    if (!activeMap) return;
     const bounds = event.currentTarget.getBoundingClientRect();
     const x = Math.max(
       2,
@@ -60,39 +106,61 @@ export default function ReportFormModal({ onClose, onSaved }) {
     const data = Object.fromEntries(formData);
 
     try {
-      if (reportType === "found" && !pin) {
+      if (reportType === "found" && activeMap && !pin) {
         throw new Error(
           "Found reports require a map pin for the found location.",
         );
       }
+      if (!selectedBuildingId) {
+        throw new Error("Please select a building or campus area.");
+      }
+
       const image = await readImage(formData.get("image"));
+
       await apiRequest("/items", {
         method: "POST",
         body: JSON.stringify({
           ...data,
           itemType: data.type,
           dateReported: data.date,
-          building: data.building,
-          room: data.room,
-          location: data.room || data.building,
+          buildingId: selectedBuildingId
+            ? parseInt(selectedBuildingId, 10)
+            : null,
+          floorId: selectedFloorId ? parseInt(selectedFloorId, 10) : null,
+          roomId: selectedRoomId ? parseInt(selectedRoomId, 10) : null,
+          locationDescription: locationDescription.trim(),
+          building: currentBuilding?.name || "",
+          floor: currentFloor?.name || "",
+          room: currentRoom?.name || "",
+          location:
+            currentRoom?.name ||
+            currentFloor?.name ||
+            currentBuilding?.name ||
+            "Campus",
           contactPhone: data.contact,
           isAnonymous: Boolean(formData.get("isAnonymous")),
           hidePhone: Boolean(formData.get("hidePhone")),
-          mapX: pin?.x || "",
-          mapY: pin?.y || "",
+          mapId: pin && activeMap ? activeMap.id : null,
+          mapX: pin?.x || null,
+          mapY: pin?.y || null,
           image,
         }),
       });
 
       form.reset();
-      setBuilding("Scanlon");
-      setFloor("Ground floor");
+      setSelectedBuildingId("");
+      setSelectedFloorId("");
+      setSelectedRoomId("");
+      setLocationDescription("");
       setReportType("lost");
       setPin(null);
       setImagePreview("");
       onSaved();
     } catch (requestError) {
       setError(requestError.message);
+      // If error might be due to outdated location options, refresh options without wiping form
+      fetchLocations();
+      fetchActiveMap();
     } finally {
       setSubmitting(false);
     }
@@ -128,14 +196,18 @@ export default function ReportFormModal({ onClose, onSaved }) {
 
           <label>
             Item title
-            <input name="title" required />
+            <input
+              name="title"
+              required
+              placeholder="e.g. Black Lenovo ThinkPad, Water Bottle"
+            />
           </label>
 
           <label>
             Category
             <input
               name="category"
-              placeholder="e.g. Electronics, ID, clothing"
+              placeholder="e.g. Electronics, ID, clothing, keys"
               required
             />
           </label>
@@ -143,89 +215,150 @@ export default function ReportFormModal({ onClose, onSaved }) {
           {reportType === "found" && (
             <label>
               Finder's name
-              <input name="reporterName" required />
+              <input
+                name="reporterName"
+                required
+                placeholder="Full name of finder"
+              />
             </label>
           )}
 
+          {/* DYNAMIC DEPENDENT LOCATION SELECTORS */}
           <div className="form-row">
             <label>
-              Building / area
+              Building / Campus Area *
               <select
-                name="building"
-                value={building}
+                name="buildingId"
+                value={selectedBuildingId}
+                required
                 onChange={(event) => {
-                  const nextBuilding = event.target.value;
-                  const nextFloor = Object.keys(
-                    campusLocations[nextBuilding],
-                  )[0];
-                  setBuilding(nextBuilding);
-                  setFloor(nextFloor);
+                  setSelectedBuildingId(event.target.value);
+                  setSelectedFloorId("");
+                  setSelectedRoomId("");
                 }}
               >
-                {Object.keys(campusLocations).map((name) => (
-                  <option key={name} value={name}>
-                    {name}
+                <option value="">Select a building / area...</option>
+                {locations.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
                   </option>
                 ))}
               </select>
             </label>
 
             <label>
-              Floor
+              Floor (optional)
               <select
-                name="floor"
-                value={floor}
-                onChange={(event) => setFloor(event.target.value)}
+                name="floorId"
+                value={selectedFloorId}
+                disabled={!selectedBuildingId || availableFloors.length === 0}
+                onChange={(event) => {
+                  setSelectedFloorId(event.target.value);
+                  setSelectedRoomId("");
+                }}
               >
-                {floorOptions.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
+                {!selectedBuildingId ? (
+                  <option value="">Select building first</option>
+                ) : availableFloors.length === 0 ? (
+                  <option value="">No floors registered</option>
+                ) : (
+                  <>
+                    <option value="">Select floor (optional)</option>
+                    {availableFloors.map((f) => (
+                      <option key={f.id} value={f.id}>
+                        {f.name}
+                      </option>
+                    ))}
+                  </>
+                )}
               </select>
             </label>
           </div>
 
-          <label>
-            Room / specific area
-            <select name="room" required>
-              {roomOptions.map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="form-row">
+            <label>
+              Room / Laboratory (optional)
+              <select
+                name="roomId"
+                value={selectedRoomId}
+                disabled={!selectedFloorId || availableRooms.length === 0}
+                onChange={(event) => setSelectedRoomId(event.target.value)}
+              >
+                {!selectedFloorId ? (
+                  <option value="">Select floor first</option>
+                ) : availableRooms.length === 0 ? (
+                  <option value="">No rooms on this floor (optional)</option>
+                ) : (
+                  <>
+                    <option value="">Select room (optional)</option>
+                    {availableRooms.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.name} {r.code ? `(${r.code})` : ""}
+                      </option>
+                    ))}
+                  </>
+                )}
+              </select>
+            </label>
 
+            <label>
+              Specific Location Details (optional)
+              <input
+                type="text"
+                value={locationDescription}
+                onChange={(e) => setLocationDescription(e.target.value)}
+                placeholder="e.g. Near hallway stairs, Bench outside room"
+              />
+            </label>
+          </div>
+
+          {/* CAMPUS MAP PINPOINT */}
           <div className="map-picker">
             <div className="map-picker-heading">
               <strong>Pinpoint the campus location</strong>
               <span>
-                {pin
-                  ? `Pinned at ${pin.x}%, ${pin.y}%`
-                  : "Click the map to place a pin"}
+                {activeMap
+                  ? pin
+                    ? `Pinned at ${pin.x}%, ${pin.y}%`
+                    : "Click the map to place a pin"
+                  : "Map currently unavailable"}
               </span>
             </div>
-            <div
-              className="campus-map"
-              onClick={handleMapClick}
-              role="application"
-              aria-label="Campus map. Click to place a location pin"
-            >
-              <img
-                className="map-image"
-                src="/assets/images/campus-map.jpg"
-                alt="Campus map"
-              />
-              {pin && (
-                <span
-                  className="map-pin"
-                  style={{ left: `${pin.x}%`, top: `${pin.y}%` }}
-                >
-                  ●
-                </span>
-              )}
-            </div>
+
+            {loadingMap ? (
+              <div className="map-loading-box">Loading campus map...</div>
+            ) : activeMap ? (
+              <div
+                className="campus-map"
+                onClick={handleMapClick}
+                role="application"
+                aria-label={`Campus map: ${activeMap.name}. Click to place a location pin`}
+              >
+                <img
+                  className="map-image"
+                  src={activeMap.imageUrl}
+                  alt={activeMap.name || "Campus map"}
+                />
+                {pin && (
+                  <span
+                    className="map-pin"
+                    style={{ left: `${pin.x}%`, top: `${pin.y}%` }}
+                  >
+                    ●
+                  </span>
+                )}
+              </div>
+            ) : (
+              <div className="no-map-card">
+                <p>
+                  <strong>No campus map is currently available.</strong>
+                </p>
+                <p>
+                  You can still submit your report using the location selectors
+                  and description above.
+                </p>
+              </div>
+            )}
           </div>
 
           <label>
@@ -234,6 +367,7 @@ export default function ReportFormModal({ onClose, onSaved }) {
               name="contact"
               type="tel"
               required={reportType === "found"}
+              placeholder="e.g. 09123456789"
             />
           </label>
 
@@ -270,7 +404,12 @@ export default function ReportFormModal({ onClose, onSaved }) {
 
           <label>
             Description
-            <textarea name="description" rows={4} required />
+            <textarea
+              name="description"
+              rows={4}
+              required
+              placeholder="Detailed description of the item"
+            />
           </label>
 
           {error && <p className="form-error">{error}</p>}

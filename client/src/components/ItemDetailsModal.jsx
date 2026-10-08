@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { apiRequest } from "../api/client.js";
 import { statusMessage, statusText } from "../constants/statuses.js";
+import { formatLocation, normalizeCoord } from "../utils/location.js";
 
 export default function ItemDetailsModal({
   item,
@@ -93,10 +94,7 @@ export default function ItemDetailsModal({
           <dd>{item.date}</dd>
 
           <dt>Location</dt>
-          <dd>
-            {item.building ? `${item.building} · ` : ""}
-            {item.location} · {item.floor}
-          </dd>
+          <dd>{formatLocation(item)}</dd>
 
           <dt>Status</dt>
           <dd>{statusText(item.status)}</dd>
@@ -143,19 +141,23 @@ export default function ItemDetailsModal({
         {hasMapCoordinates ? (
           <div className="detail-map">
             <img
-              src="/assets/images/campus-map.jpg"
+              src={item.mapImageUrl || "/assets/images/campus-map.jpg"}
               alt="Reported campus location"
             />
             <span
               className="detail-map-pin"
-              style={{ left: `${item.mapX}%`, top: `${item.mapY}%` }}
+              style={{
+                left: `${normalizeCoord(item.mapX)}%`,
+                top: `${normalizeCoord(item.mapY)}%`,
+              }}
             >
               ●
             </span>
           </div>
         ) : (
           <p className="detail-note">
-            Reported location: {item.location}. No exact map pin was saved.
+            Reported location: {formatLocation(item)}. No exact map pin was
+            saved.
           </p>
         )}
 

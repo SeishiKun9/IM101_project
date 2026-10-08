@@ -1,4 +1,5 @@
 import React from "react";
+import { formatLocation, normalizeCoord } from "../../utils/location.js";
 
 export default function CompareModal({
   selected,
@@ -34,10 +35,7 @@ export default function CompareModal({
             <p>
               {type === "lost" ? "Date lost" : "Date found"}: {report.date}
             </p>
-            <p>
-              {report.building ? `${report.building} · ` : ""}
-              {report.location} · {report.floor}
-            </p>
+            <p>Location: {formatLocation(report)}</p>
             <p>
               {type === "lost" ? "Reporter" : "Finder"}:{" "}
               {report.privateReporterName ||
@@ -51,12 +49,15 @@ export default function CompareModal({
               report.mapY !== undefined && (
                 <div className="comparison-map">
                   <img
-                    src="/assets/images/campus-map.jpg"
+                    src={report.mapImageUrl || "/assets/images/campus-map.jpg"}
                     alt={`${label} reported location`}
                   />
                   <span
                     className="detail-map-pin"
-                    style={{ left: `${report.mapX}%`, top: `${report.mapY}%` }}
+                    style={{
+                      left: `${normalizeCoord(report.mapX)}%`,
+                      top: `${normalizeCoord(report.mapY)}%`,
+                    }}
                   >
                     ●
                   </span>

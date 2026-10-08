@@ -4,6 +4,7 @@ import {
   statusMessage,
   statusText,
 } from "../constants/statuses.js";
+import { formatLocation } from "../utils/location.js";
 
 export default function ReportCard({
   item,
@@ -51,10 +52,7 @@ export default function ReportCard({
 
         <h3>{item.title}</h3>
         <p className="report-card-description">{item.description}</p>
-        <p>
-          {item.building ? `${item.building} · ` : ""}
-          {item.location} · {item.floor}
-        </p>
+        <p>{formatLocation(item)}</p>
         <small>
           {item.date} · Status: <strong>{statusText(item.status)}</strong>
         </small>

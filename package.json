@@ -7,6 +7,7 @@
     "dev": "concurrently \"vite --host 127.0.0.1\" \"node --watch server/src/index.js\"",
     "start": "npm run build && node server/src/index.js",
     "build": "vite build",
+    "migrate": "node db/migrate.js",
     "format": "prettier --write server/src/index.js client/src/**/*.{js,jsx} client/*.html client/assets/css/*.css vite.config.js client/main.jsx"
   },
   "devDependencies": {

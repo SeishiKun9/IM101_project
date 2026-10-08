@@ -5,8 +5,10 @@ import {
   roleNames,
   statusText,
 } from "../../constants/statuses.js";
+import { formatLocation } from "../../utils/location.js";
 import AdminAccountForm from "./AdminAccountForm.jsx";
 import AdminManagement from "./AdminManagement.jsx";
+import LocationMapManagement from "./LocationMapManagement.jsx";
 import CompareModal from "./CompareModal.jsx";
 
 export default function ReviewWorkspace({ user, onChanged }) {
@@ -132,8 +134,7 @@ export default function ReviewWorkspace({ user, onChanged }) {
                 <div>
                   <strong>{item.title}</strong>
                   <small>
-                    {item.building ? `${item.building} · ` : ""}
-                    {item.location} · {item.date}
+                    {formatLocation(item)} · {item.date}
                   </small>
                 </div>
                 <span className="review-actions">
@@ -248,6 +249,7 @@ export default function ReviewWorkspace({ user, onChanged }) {
 
       {user?.role === "admin" && (
         <>
+          <LocationMapManagement />
           <AdminAccountForm />
           <AdminManagement />
         </>

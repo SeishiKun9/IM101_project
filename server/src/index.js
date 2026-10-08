@@ -5,6 +5,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
 
+import { createLocationsRouter } from "./routes/locations.js";
+import { createMapsRouter } from "./routes/maps.js";
+import { createAdminLocationsRouter } from "./routes/adminLocations.js";
+import { createAdminMapsRouter } from "./routes/adminMaps.js";
+
 const { Pool } = pg;
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -21,16 +26,34 @@ const pool = process.env.DATABASE_URL
     })
   : null;
 
-app.use(express.json({ limit: "8mb" }));
+app.use(express.json({ limit: "15mb" }));
 app.use(express.static(path.join(__dirname, "../../client/dist")));
+app.use("/uploads", express.static(path.join(__dirname, "../../uploads")));
+
+const itemLocationJoins = `
+  JOIN categories c ON c.category_id = i.category_id
+  LEFT JOIN buildings b ON b.building_id = i.building_id
+  LEFT JOIN floors f ON f.floor_id = i.floor_id
+  LEFT JOIN rooms r ON r.room_id = i.room_id
+  LEFT JOIN campus_maps m ON m.map_id = i.map_id
+  LEFT JOIN locations l ON l.location_id = i.location_id`;
 
 const publicItemFields = `
   i.item_id AS id, i.item_type AS type, i.title, i.description,
   i.date_reported AS date, i.status, c.category_name AS category,
-  l.building, l.location_name AS location, l.floor, i.matched_lost_id AS "matchedLostId",
+  COALESCE(b.name, i.location_snapshot->>'buildingName', l.building, 'Campus Area') AS building,
+  COALESCE(r.name, i.location_description, i.location_snapshot->>'roomName', l.location_name, 'General Area') AS location,
+  COALESCE(f.name, i.location_snapshot->>'floorName', l.floor, 'All floors') AS floor,
+  i.building_id AS "buildingId", i.floor_id AS "floorId", i.room_id AS "roomId",
+  i.location_description AS "locationDescription",
+  i.matched_lost_id AS "matchedLostId",
   i.matched_found_id AS "matchedFoundId", i.review_lost_id AS "reviewLostId", i.finder_name AS "finderName",
   i.found_location AS "foundLocation", i.confirmation_date AS "confirmationDate",
+  i.map_id AS "mapId",
+  COALESCE(m.image_path, '/uploads/maps/campus-map-v1.jpg') AS "mapImageUrl",
+  COALESCE(m.name, 'Campus Main Map') AS "mapName",
   i.map_x AS "mapX", i.map_y AS "mapY",
+  i.location_snapshot AS "locationSnapshot",
   CASE WHEN i.is_anonymous THEN 'Anonymous' ELSE COALESCE(i.reporter_name, 'Unknown') END AS "reporterName",
   (SELECT image_path FROM item_images WHERE item_id = i.item_id ORDER BY uploaded_at LIMIT 1) AS image`;
 
@@ -99,6 +122,32 @@ app.get(
     if (!pool) return res.json({ status: "ok", database: "not configured" });
     await pool.query("SELECT 1");
     res.json({ status: "ok", database: "connected" });
+  }),
+);
+
+app.use(
+  "/api/locations",
+  createLocationsRouter({ pool, asyncRoute, requireDatabase }),
+);
+app.use("/api/maps", createMapsRouter({ pool, asyncRoute, requireDatabase }));
+app.use(
+  "/api/admin",
+  createAdminLocationsRouter({
+    pool,
+    asyncRoute,
+    requireDatabase,
+    requireAuth,
+    requireRole,
+  }),
+);
+app.use(
+  "/api/admin/maps",
+  createAdminMapsRouter({
+    pool,
+    asyncRoute,
+    requireDatabase,
+    requireAuth,
+    requireRole,
   }),
 );
 
@@ -254,10 +303,25 @@ app.get(
     }
     const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
     const result = await pool.query(
-      `SELECT ${publicItemFields} FROM items i JOIN categories c ON c.category_id = i.category_id JOIN locations l ON l.location_id = i.location_id ${whereSql} ORDER BY i.created_at DESC LIMIT 100`,
+      `SELECT ${publicItemFields} FROM items i ${itemLocationJoins} ${whereSql} ORDER BY i.created_at DESC LIMIT 100`,
       values,
     );
     res.json(result.rows);
+  }),
+);
+
+app.get(
+  "/api/items/:itemId",
+  requireDatabase,
+  asyncRoute(async (req, res) => {
+    const result = await pool.query(
+      `SELECT ${publicItemFields} FROM items i ${itemLocationJoins} WHERE i.item_id = $1`,
+      [req.params.itemId],
+    );
+    if (!result.rows[0]) {
+      return res.status(404).json({ error: "Report not found." });
+    }
+    res.json(result.rows[0]);
   }),
 );
 
@@ -283,38 +347,201 @@ app.post(
       description,
       dateReported,
       category = "Campus report",
-      location,
-      building = location,
-      room = location,
-      floor = "Unknown",
+      buildingId,
+      floorId,
+      roomId,
+      locationDescription,
+      building: legacyBuilding,
+      floor: legacyFloor,
+      room: legacyRoom,
+      location: legacyLocation,
       reporterName,
       contactPhone,
       isAnonymous = false,
       hidePhone = true,
+      mapId,
       mapX,
       mapY,
       image,
     } = req.body;
+
     if (
       !itemType ||
       !["lost", "found"].includes(itemType) ||
-      !title ||
-      !description ||
-      !dateReported ||
-      !location
-    )
+      !title?.trim() ||
+      !description?.trim() ||
+      !dateReported
+    ) {
       return res.status(400).json({
-        error:
-          "Report type, title, description, date, and location are required.",
+        error: "Report type, title, description, and date are required.",
       });
-    if (
-      itemType === "found" &&
-      (!reporterName || !contactPhone || !image || !mapX || !mapY)
-    )
-      return res.status(400).json({
-        error:
-          "Found reports require finder name, phone, photo, map pin, and found location.",
-      });
+    }
+
+    // 1. Resolve & Validate Building
+    let resolvedBuilding = null;
+    if (buildingId) {
+      const bRes = await pool.query(
+        "SELECT building_id, name, is_active, is_archived FROM buildings WHERE building_id = $1",
+        [buildingId],
+      );
+      if (
+        !bRes.rows.length ||
+        bRes.rows[0].is_archived ||
+        !bRes.rows[0].is_active
+      ) {
+        return res.status(400).json({
+          error:
+            "The selected building is not active or available. Please refresh and select an active building.",
+        });
+      }
+      resolvedBuilding = bRes.rows[0];
+    } else if (legacyBuilding) {
+      const bRes = await pool.query(
+        "SELECT building_id, name, is_active, is_archived FROM buildings WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) AND is_archived = false",
+        [legacyBuilding],
+      );
+      if (bRes.rows.length && bRes.rows[0].is_active) {
+        resolvedBuilding = bRes.rows[0];
+      }
+    }
+
+    if (!resolvedBuilding && !legacyLocation) {
+      return res
+        .status(400)
+        .json({ error: "Please select a valid building or campus location." });
+    }
+
+    // 2. Resolve & Validate Floor (Optional, e.g. for whole building or outdoor areas)
+    let resolvedFloor = null;
+    if (floorId) {
+      const fRes = await pool.query(
+        "SELECT floor_id, building_id, name, is_active, is_archived FROM floors WHERE floor_id = $1",
+        [floorId],
+      );
+      if (
+        !fRes.rows.length ||
+        fRes.rows[0].is_archived ||
+        !fRes.rows[0].is_active
+      ) {
+        return res.status(400).json({
+          error:
+            "The selected floor is not active or available. Please reselect a valid floor.",
+        });
+      }
+      if (
+        resolvedBuilding &&
+        fRes.rows[0].building_id !== resolvedBuilding.building_id
+      ) {
+        return res.status(400).json({
+          error: "The selected floor does not belong to the selected building.",
+        });
+      }
+      resolvedFloor = fRes.rows[0];
+    } else if (legacyFloor && resolvedBuilding) {
+      const fRes = await pool.query(
+        "SELECT floor_id, building_id, name, is_active, is_archived FROM floors WHERE building_id = $1 AND LOWER(TRIM(name)) = LOWER(TRIM($2)) AND is_archived = false",
+        [resolvedBuilding.building_id, legacyFloor],
+      );
+      if (fRes.rows.length && fRes.rows[0].is_active) {
+        resolvedFloor = fRes.rows[0];
+      }
+    }
+
+    // 3. Resolve & Validate Room (Optional, e.g. hallways, outdoor areas)
+    let resolvedRoom = null;
+    if (roomId) {
+      const rRes = await pool.query(
+        "SELECT room_id, floor_id, name, is_active, is_archived FROM rooms WHERE room_id = $1",
+        [roomId],
+      );
+      if (
+        !rRes.rows.length ||
+        rRes.rows[0].is_archived ||
+        !rRes.rows[0].is_active
+      ) {
+        return res.status(400).json({
+          error:
+            "The selected room is not active or available. Please reselect a valid room.",
+        });
+      }
+      if (!resolvedFloor || rRes.rows[0].floor_id !== resolvedFloor.floor_id) {
+        return res.status(400).json({
+          error: "The selected room does not belong to the selected floor.",
+        });
+      }
+      resolvedRoom = rRes.rows[0];
+    } else if (legacyRoom && resolvedFloor) {
+      const rRes = await pool.query(
+        "SELECT room_id, floor_id, name, is_active, is_archived FROM rooms WHERE floor_id = $1 AND LOWER(TRIM(name)) = LOWER(TRIM($2)) AND is_archived = false",
+        [resolvedFloor.floor_id, legacyRoom],
+      );
+      if (rRes.rows.length && rRes.rows[0].is_active) {
+        resolvedRoom = rRes.rows[0];
+      }
+    }
+
+    // 4. Validate Active Map & Coordinates
+    const activeMapRes = await pool.query(
+      "SELECT map_id, name, image_path FROM campus_maps WHERE is_active = true AND is_archived = false LIMIT 1",
+    );
+    const activeMap = activeMapRes.rows[0] || null;
+
+    const hasPin =
+      mapX !== undefined &&
+      mapX !== null &&
+      mapX !== "" &&
+      mapY !== undefined &&
+      mapY !== null &&
+      mapY !== "";
+
+    let resolvedMapId = null;
+    let resolvedMapName = null;
+    let resolvedMapVersion = null;
+
+    if (hasPin) {
+      if (mapId) {
+        const mRes = await pool.query(
+          "SELECT map_id, name, version_number FROM campus_maps WHERE map_id = $1",
+          [mapId],
+        );
+        if (mRes.rows.length) {
+          resolvedMapId = mRes.rows[0].map_id;
+          resolvedMapName = mRes.rows[0].name;
+          resolvedMapVersion = mRes.rows[0].version_number;
+        }
+      }
+      if (!resolvedMapId && activeMap) {
+        resolvedMapId = activeMap.map_id;
+        resolvedMapName = activeMap.name;
+        resolvedMapVersion = activeMap.version_number;
+      }
+    }
+
+    if (itemType === "found") {
+      if (!reporterName || !contactPhone || !image) {
+        return res.status(400).json({
+          error:
+            "Found reports require finder name, contact phone, and item photo.",
+        });
+      }
+      // If an active campus map exists, require placing a pin on it
+      if (activeMap && !hasPin) {
+        return res.status(400).json({
+          error:
+            "Found reports require a map pin pinpointing where the item was found.",
+        });
+      }
+    }
+
+    const locationSnapshot = {
+      buildingName: resolvedBuilding?.name || legacyBuilding || null,
+      floorName: resolvedFloor?.name || legacyFloor || null,
+      roomName: resolvedRoom?.name || legacyRoom || null,
+      locationDescription: (locationDescription || "").trim() || null,
+      mapName: resolvedMapName || (hasPin ? "Campus Map" : null),
+      mapVersion: resolvedMapVersion || null,
+    };
+
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
@@ -322,16 +549,45 @@ app.post(
         "INSERT INTO categories (category_name) VALUES ($1) ON CONFLICT (category_name) DO UPDATE SET category_name = EXCLUDED.category_name RETURNING category_id",
         [category],
       );
+
+      // Maintain legacy location record for backwards compatibility
+      const legacyLocName =
+        resolvedRoom?.name ||
+        locationDescription?.trim() ||
+        legacyRoom ||
+        legacyLocation ||
+        resolvedBuilding?.name ||
+        "Campus Area";
+      const legacyBuildingName =
+        resolvedBuilding?.name || legacyBuilding || "Campus Area";
+      const legacyFloorName =
+        resolvedFloor?.name || legacyFloor || "All floors";
+
       const locationResult = await client.query(
         "INSERT INTO locations (location_name, building, floor) VALUES ($1, $2, $3) ON CONFLICT (building, location_name, floor) DO UPDATE SET floor = EXCLUDED.floor RETURNING location_id",
-        [room, building, floor],
+        [legacyLocName, legacyBuildingName, legacyFloorName],
       );
+
       const item = await client.query(
-        "INSERT INTO items (reporter_id, category_id, location_id, item_type, title, description, date_reported, reporter_name, contact_phone, is_anonymous, hide_phone, map_x, map_y) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING item_id",
+        `INSERT INTO items (
+           reporter_id, category_id, location_id,
+           building_id, floor_id, room_id, map_id,
+           location_description, location_snapshot,
+           item_type, title, description, date_reported,
+           reporter_name, contact_phone, is_anonymous, hide_phone,
+           map_x, map_y
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+         RETURNING item_id`,
         [
           req.user.id,
           categoryResult.rows[0].category_id,
           locationResult.rows[0].location_id,
+          resolvedBuilding?.building_id || null,
+          resolvedFloor?.floor_id || null,
+          resolvedRoom?.room_id || null,
+          resolvedMapId,
+          (locationDescription || "").trim() || null,
+          JSON.stringify(locationSnapshot),
           itemType,
           title.trim(),
           description.trim(),
@@ -340,15 +596,18 @@ app.post(
           contactPhone || null,
           Boolean(isAnonymous),
           hidePhone !== false,
-          mapX || null,
-          mapY || null,
+          hasPin ? mapX : null,
+          hasPin ? mapY : null,
         ],
       );
-      if (image)
+
+      if (image) {
         await client.query(
           "INSERT INTO item_images (item_id, image_path) VALUES ($1, $2)",
           [item.rows[0].item_id, image],
         );
+      }
+
       await client.query("COMMIT");
       res.status(201).json({ id: item.rows[0].item_id });
     } catch (error) {
@@ -360,13 +619,116 @@ app.post(
   }),
 );
 
+// Deliberately update a report's location and map coordinates
+app.patch(
+  "/api/items/:itemId/location",
+  requireAuth,
+  requireDatabase,
+  asyncRoute(async (req, res) => {
+    const { buildingId, floorId, roomId, locationDescription, mapX, mapY } =
+      req.body;
+    const itemQuery = await pool.query(
+      "SELECT item_id, reporter_id FROM items WHERE item_id = $1",
+      [req.params.itemId],
+    );
+    if (!itemQuery.rows.length) {
+      return res.status(404).json({ error: "Item not found." });
+    }
+    const item = itemQuery.rows[0];
+    if (
+      item.reporter_id !== req.user.id &&
+      !["staff", "admin"].includes(req.user.role)
+    ) {
+      return res
+        .status(403)
+        .json({ error: "Not authorized to update this item's location." });
+    }
+
+    let bName = null;
+    let fName = null;
+    let rName = null;
+
+    if (buildingId) {
+      const bRes = await pool.query(
+        "SELECT name FROM buildings WHERE building_id = $1",
+        [buildingId],
+      );
+      if (bRes.rows.length) bName = bRes.rows[0].name;
+    }
+    if (floorId) {
+      const fRes = await pool.query(
+        "SELECT name FROM floors WHERE floor_id = $1",
+        [floorId],
+      );
+      if (fRes.rows.length) fName = fRes.rows[0].name;
+    }
+    if (roomId) {
+      const rRes = await pool.query(
+        "SELECT name FROM rooms WHERE room_id = $1",
+        [roomId],
+      );
+      if (rRes.rows.length) rName = rRes.rows[0].name;
+    }
+
+    const hasPin =
+      mapX !== undefined &&
+      mapX !== null &&
+      mapX !== "" &&
+      mapY !== undefined &&
+      mapY !== null &&
+      mapY !== "";
+
+    let mapId = null;
+    let mapName = null;
+    if (hasPin) {
+      const activeMap = await pool.query(
+        "SELECT map_id, name FROM campus_maps WHERE is_active = true AND is_archived = false LIMIT 1",
+      );
+      if (activeMap.rows.length) {
+        mapId = activeMap.rows[0].map_id;
+        mapName = activeMap.rows[0].name;
+      }
+    }
+
+    const snapshot = {
+      buildingName: bName,
+      floorName: fName,
+      roomName: rName,
+      locationDescription: (locationDescription || "").trim() || null,
+      mapName,
+    };
+
+    await pool.query(
+      `UPDATE items
+       SET building_id = $1, floor_id = $2, room_id = $3,
+           location_description = $4, map_id = $5,
+           map_x = $6, map_y = $7, location_snapshot = $8,
+           updated_at = now()
+       WHERE item_id = $9`,
+      [
+        buildingId || null,
+        floorId || null,
+        roomId || null,
+        (locationDescription || "").trim() || null,
+        mapId,
+        hasPin ? mapX : null,
+        hasPin ? mapY : null,
+        JSON.stringify(snapshot),
+        req.params.itemId,
+      ],
+    );
+
+    res.json({ success: true });
+  }),
+);
+
 app.get(
   "/api/my/reports",
   requireAuth,
   requireDatabase,
   asyncRoute(async (req, res) => {
     const result = await pool.query(
-      `SELECT ${publicItemFields}, i.reporter_name AS "privateReporterName", i.contact_phone AS "contactPhone", i.is_anonymous AS "isAnonymous", i.hide_phone AS "hidePhone", COALESCE(json_agg(json_build_object('id', cl.claim_id, 'status', cl.status, 'claimDate', cl.claim_date, 'reviewedAt', cl.reviewed_at, 'rejectionReason', cl.rejection_reason, 'itemId', cl.item_id)) FILTER (WHERE cl.claim_id IS NOT NULL), '[]') AS claims FROM items i JOIN categories c ON c.category_id = i.category_id JOIN locations l ON l.location_id = i.location_id LEFT JOIN claims cl ON (cl.item_id = i.item_id OR cl.item_id = i.matched_found_id) AND cl.claimant_id = $1 WHERE i.reporter_id = $1 GROUP BY i.item_id, c.category_name, l.building, l.location_name, l.floor ORDER BY i.created_at DESC`,
+      `SELECT ${publicItemFields}, i.reporter_name AS "privateReporterName", i.contact_phone AS "contactPhone", i.is_anonymous AS "isAnonymous", i.hide_phone AS "hidePhone", COALESCE(json_agg(json_build_object('id', cl.claim_id, 'status', cl.status, 'claimDate', cl.claim_date, 'reviewedAt', cl.reviewed_at, 'rejectionReason', cl.rejection_reason, 'itemId', cl.item_id)) FILTER (WHERE cl.claim_id IS NOT NULL), '[]') AS claims FROM items i ${itemLocationJoins} LEFT JOIN claims cl ON (cl.item_id = i.item_id OR cl.item_id = i.matched_found_id) AND cl.claimant_id = $1 WHERE i.reporter_id = $1 GROUP BY i.item_id, c.category_name, b.name, f.name, r.name, m.image_path, m.name, l.building, l.location_name, l.floor ORDER BY i.created_at DESC`,
       [req.user.id],
     );
     res.json(result.rows);
@@ -453,10 +815,10 @@ app.get(
   requireRole("staff", "admin"),
   asyncRoute(async (req, res) => {
     const items = await pool.query(
-      `SELECT ${publicItemFields}, i.reporter_name AS "privateReporterName", i.contact_phone AS "contactPhone", i.is_anonymous AS "isAnonymous", i.hide_phone AS "hidePhone" FROM items i JOIN categories c ON c.category_id = i.category_id JOIN locations l ON l.location_id = i.location_id WHERE i.item_type = 'found' AND i.status IN ('reported', 'under_review') AND i.matched_lost_id IS NULL ORDER BY i.created_at`,
+      `SELECT ${publicItemFields}, i.reporter_name AS "privateReporterName", i.contact_phone AS "contactPhone", i.is_anonymous AS "isAnonymous", i.hide_phone AS "hidePhone" FROM items i ${itemLocationJoins} WHERE i.item_type = 'found' AND i.status IN ('reported', 'under_review') AND i.matched_lost_id IS NULL ORDER BY i.created_at`,
     );
     const lost = await pool.query(
-      `SELECT ${publicItemFields}, i.reporter_name AS "privateReporterName", i.contact_phone AS "contactPhone", i.is_anonymous AS "isAnonymous", i.hide_phone AS "hidePhone" FROM items i JOIN categories c ON c.category_id = i.category_id JOIN locations l ON l.location_id = i.location_id WHERE i.item_type = 'lost' AND i.status IN ('reported', 'under_review') AND i.matched_found_id IS NULL ORDER BY i.created_at`,
+      `SELECT ${publicItemFields}, i.reporter_name AS "privateReporterName", i.contact_phone AS "contactPhone", i.is_anonymous AS "isAnonymous", i.hide_phone AS "hidePhone" FROM items i ${itemLocationJoins} WHERE i.item_type = 'lost' AND i.status IN ('reported', 'under_review') AND i.matched_found_id IS NULL ORDER BY i.created_at`,
     );
     const claims = await pool.query(
       'SELECT cl.claim_id AS id, cl.status, cl.claim_date AS "claimDate", cl.reviewed_at AS "reviewedAt", cl.rejection_reason AS "rejectionReason", cl.item_id AS "itemId", u.name AS claimant, u.email, i.reporter_name AS "finderName", i.contact_phone AS "finderPhone" FROM claims cl JOIN users u ON u.user_id = cl.claimant_id JOIN items i ON i.item_id = cl.item_id ORDER BY cl.claim_date DESC',
@@ -470,8 +832,7 @@ app.get(
               lost_item.title AS "lostTitle",
               lost_item.reporter_name AS "lostReporterName"
        FROM items i 
-       JOIN categories c ON c.category_id = i.category_id 
-       JOIN locations l ON l.location_id = i.location_id 
+       ${itemLocationJoins}
        LEFT JOIN items lost_item ON lost_item.item_id = i.matched_lost_id
        WHERE (i.item_type = 'found' AND i.matched_lost_id IS NOT NULL AND i.status IN ('found', 'claimed', 'completed'))
           OR (i.matched_lost_id IS NULL AND i.matched_found_id IS NULL AND i.status IN ('found', 'claimed', 'completed'))
@@ -756,7 +1117,7 @@ app.get(
   requireRole("admin"),
   asyncRoute(async (req, res) => {
     const result = await pool.query(
-      `SELECT ${publicItemFields}, i.reporter_name AS "privateReporterName", i.contact_phone AS "contactPhone", i.is_anonymous AS "isAnonymous", i.hide_phone AS "hidePhone" FROM items i JOIN categories c ON c.category_id = i.category_id JOIN locations l ON l.location_id = i.location_id ORDER BY i.created_at DESC LIMIT 100`,
+      `SELECT ${publicItemFields}, i.reporter_name AS "privateReporterName", i.contact_phone AS "contactPhone", i.is_anonymous AS "isAnonymous", i.hide_phone AS "hidePhone" FROM items i ${itemLocationJoins} ORDER BY i.created_at DESC LIMIT 100`,
     );
     res.json(result.rows);
   }),

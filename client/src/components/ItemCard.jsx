@@ -1,5 +1,6 @@
 import React from "react";
 import { statusText } from "../constants/statuses.js";
+import { formatLocation } from "../utils/location.js";
 
 export default function ItemCard({ item, onClaim, onView }) {
   const isClosed = ["claimed", "completed"].includes(item.status);
@@ -34,10 +35,7 @@ export default function ItemCard({ item, onClaim, onView }) {
 
       <div className="item-copy">
         <h3>{item.title}</h3>
-        <p className="item-location">
-          {item.building ? `${item.building} · ` : ""}
-          {item.location} · {item.floor}
-        </p>
+        <p className="item-location">{formatLocation(item)}</p>
         <small className="item-date">
           {item.date} · {statusText(item.status)}
         </small>
