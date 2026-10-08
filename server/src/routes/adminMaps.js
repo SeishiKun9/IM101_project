@@ -36,6 +36,7 @@ export function createAdminMapsRouter({
                   ELSE 'inactive'
                 END AS status,
                 m.created_at AS "uploadedAt",
+                m.created_at AS "createdAt",
                 u.name AS "uploadedByName",
                 COUNT(i.item_id)::int AS "reportsCount"
          FROM campus_maps m
@@ -125,6 +126,83 @@ export function createAdminMapsRouter({
           const fullPath = path.join(uploadsDir, savedFile.filename);
           if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
         } catch (_) {}
+        throw err;
+      } finally {
+        client.release();
+      }
+    }),
+  );
+
+  // Update map version metadata (name, description, optionally replacement image)
+  router.put(
+    ["/:id", "/api/admin/maps/:id"],
+    asyncRoute(async (req, res) => {
+      const mapId = req.params.id;
+      const { name, description, image } = req.body;
+
+      const cleanName = (name || "").trim();
+      if (!cleanName) {
+        return res.status(400).json({ error: "Map name is required." });
+      }
+
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+
+        const targetRes = await client.query(
+          "SELECT * FROM campus_maps WHERE map_id = $1",
+          [mapId],
+        );
+        if (!targetRes.rows.length) {
+          await client.query("ROLLBACK");
+          return res.status(404).json({ error: "Campus map not found." });
+        }
+        const oldRow = targetRes.rows[0];
+
+        let imagePath = oldRow.image_path;
+        let fileSize = oldRow.file_size;
+        let mimeType = oldRow.mime_type;
+
+        if (image && typeof image === "string" && image.startsWith("data:")) {
+          const savedFile = validateAndSaveImage(image, uploadsDir, "campus-map");
+          imagePath = savedFile.relativePath;
+          fileSize = savedFile.fileSize;
+          mimeType = savedFile.mimeType;
+        }
+
+        const updateRes = await client.query(
+          `UPDATE campus_maps
+           SET name = $1, description = $2, image_path = $3, file_size = $4, mime_type = $5, updated_at = now()
+           WHERE map_id = $6
+           RETURNING map_id AS id, name, description, image_path AS "imageUrl",
+                     version_number AS version, file_size AS "fileSize",
+                     mime_type AS "mimeType", is_active AS "isActive",
+                     is_archived AS "isArchived", created_at AS "createdAt", updated_at AS "updatedAt"`,
+          [
+            cleanName,
+            description ? description.trim() : null,
+            imagePath,
+            fileSize,
+            mimeType,
+            mapId,
+          ],
+        );
+        const updatedMap = updateRes.rows[0];
+
+        await logAdminAudit(
+          client,
+          req.user.id,
+          "UPDATE",
+          "campus_maps",
+          mapId,
+          oldRow,
+          updatedMap,
+        );
+
+        await client.query("COMMIT");
+        res.json(updatedMap);
+      } catch (err) {
+        await client.query("ROLLBACK");
         throw err;
       } finally {
         client.release();

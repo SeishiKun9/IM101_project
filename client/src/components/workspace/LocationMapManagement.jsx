@@ -32,7 +32,7 @@ export default function LocationMapManagement() {
   });
   const [floorModal, setFloorModal] = useState({ open: false, floor: null });
   const [roomModal, setRoomModal] = useState({ open: false, room: null });
-  const [mapModal, setMapModal] = useState({ open: false });
+  const [mapModal, setMapModal] = useState({ open: false, map: null });
   const [previewMap, setPreviewMap] = useState(null);
 
   // Impact confirmation modal
@@ -841,13 +841,26 @@ export default function LocationMapManagement() {
                     Used by clients &amp; verifiers for placing new report pins.
                   </p>
                 </div>
-                <button
-                  type="button"
-                  className="primary compact"
-                  onClick={() => setMapModal({ open: true })}
-                >
-                  + Upload replacement map
-                </button>
+                <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                  {activeMap && (
+                    <button
+                      type="button"
+                      className="secondary compact"
+                      onClick={() =>
+                        setMapModal({ open: true, map: activeMap })
+                      }
+                    >
+                      Edit details
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="primary compact"
+                    onClick={() => setMapModal({ open: true, map: null })}
+                  >
+                    + Upload replacement map
+                  </button>
+                </div>
               </div>
 
               {activeMap ? (
@@ -903,7 +916,7 @@ export default function LocationMapManagement() {
                   <button
                     type="button"
                     className="primary"
-                    onClick={() => setMapModal({ open: true })}
+                    onClick={() => setMapModal({ open: true, map: null })}
                   >
                     Upload Initial Map
                   </button>
@@ -967,6 +980,15 @@ export default function LocationMapManagement() {
                         <td>{new Date(m.createdAt).toLocaleDateString()}</td>
                         <td>
                           <div className="action-button-group">
+                            <button
+                              type="button"
+                              className="secondary compact"
+                              onClick={() =>
+                                setMapModal({ open: true, map: m })
+                              }
+                            >
+                              Edit
+                            </button>
                             {m.status !== "active" && (
                               <button
                                 type="button"
@@ -1063,15 +1085,18 @@ export default function LocationMapManagement() {
         />
       )}
 
-      {/* Map Upload Modal */}
+      {/* Map Upload / Edit Modal */}
       {mapModal.open && (
         <MapUploadModal
-          onClose={() => setMapModal({ open: false })}
-          onSaved={(newMap) => {
-            setMapModal({ open: false });
+          mapItem={mapModal.map}
+          onClose={() => setMapModal({ open: false, map: null })}
+          onSaved={(savedMap) => {
+            setMapModal({ open: false, map: null });
             showMessage(
               "success",
-              `Map version ${newMap.version} uploaded successfully.`,
+              mapModal.map
+                ? `Map "${savedMap.name}" updated successfully.`
+                : `Map version ${savedMap.version} uploaded successfully.`,
             );
             loadData();
           }}
@@ -1589,12 +1614,22 @@ function RoomModal({ room, buildings, floors, onClose, onSaved }) {
   );
 }
 
-function MapUploadModal({ onClose, onSaved }) {
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [activateImmediately, setActivateImmediately] = useState(true);
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Failed to read image file."));
+    reader.onload = () => resolve(reader.result);
+    reader.readAsDataURL(file);
+  });
+}
+
+function MapUploadModal({ mapItem, onClose, onSaved }) {
+  const isEditing = Boolean(mapItem);
+  const [name, setName] = useState(mapItem?.name || "");
+  const [description, setDescription] = useState(mapItem?.description || "");
+  const [activateImmediately, setActivateImmediately] = useState(!mapItem);
   const [file, setFile] = useState(null);
-  const [previewUrl, setPreviewUrl] = useState("");
+  const [previewUrl, setPreviewUrl] = useState(mapItem?.imageUrl || "");
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
 
@@ -1605,7 +1640,7 @@ function MapUploadModal({ onClose, onSaved }) {
     if (selected.size > 10 * 1024 * 1024) {
       setError("File exceeds maximum allowed size of 10 MB.");
       setFile(null);
-      setPreviewUrl("");
+      setPreviewUrl(mapItem?.imageUrl || "");
       return;
     }
 
@@ -1613,7 +1648,7 @@ function MapUploadModal({ onClose, onSaved }) {
     if (!validTypes.includes(selected.type)) {
       setError("Supported file formats are JPEG, PNG, or WebP.");
       setFile(null);
-      setPreviewUrl("");
+      setPreviewUrl(mapItem?.imageUrl || "");
       return;
     }
 
@@ -1624,12 +1659,12 @@ function MapUploadModal({ onClose, onSaved }) {
 
   async function handleSubmit(e) {
     e.preventDefault();
-    if (!file) {
-      setError("Please select a map image file.");
-      return;
-    }
     if (!name.trim()) {
       setError("Map name is required.");
+      return;
+    }
+    if (!isEditing && !file) {
+      setError("Please select a map image file.");
       return;
     }
 
@@ -1637,28 +1672,36 @@ function MapUploadModal({ onClose, onSaved }) {
     setError("");
 
     try {
-      const formData = new FormData();
-      formData.append("mapImage", file);
-      formData.append("name", name.trim());
-      formData.append("description", description.trim());
-      formData.append(
-        "activateImmediately",
-        activateImmediately ? "true" : "false",
-      );
-
-      const response = await fetch("/api/admin/maps/upload", {
-        method: "POST",
-        body: formData,
-      });
-
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to upload map");
+      let base64Data = null;
+      if (file) {
+        base64Data = await readFileAsDataUrl(file);
       }
 
-      onSaved(data);
+      let result;
+      if (isEditing) {
+        result = await apiRequest(`/admin/maps/${mapItem.id}`, {
+          method: "PUT",
+          body: JSON.stringify({
+            name: name.trim(),
+            description: description.trim(),
+            image: base64Data || undefined,
+          }),
+        });
+      } else {
+        result = await apiRequest("/admin/maps", {
+          method: "POST",
+          body: JSON.stringify({
+            name: name.trim(),
+            description: description.trim(),
+            image: base64Data,
+            activateImmediately,
+          }),
+        });
+      }
+
+      onSaved(result);
     } catch (err) {
-      setError(err.message);
+      setError(err.message || "Failed to process map request.");
     } finally {
       setUploading(false);
     }
@@ -1667,14 +1710,19 @@ function MapUploadModal({ onClose, onSaved }) {
   return (
     <div className="modal-backdrop">
       <div className="modal form-modal">
-        <button className="modal-close" onClick={onClose}>
+        <button className="modal-close" onClick={onClose} disabled={uploading}>
           ×
         </button>
         <p className="eyebrow">CAMPUS MAP</p>
-        <h3>Upload Campus Map Version</h3>
+        <h3>
+          {isEditing
+            ? `Edit Map: "${mapItem.name}" (v${mapItem.version})`
+            : "Upload Campus Map Version"}
+        </h3>
         <p className="section-subtext" style={{ marginBottom: "16px" }}>
-          Accepts JPEG, PNG, and WebP images up to 10 MB. Older reports retain
-          their previous map version.
+          {isEditing
+            ? "Update the map's title, description, or optionally upload a revised image."
+            : "Accepts JPEG, PNG, and WebP images up to 10 MB. Older reports retain their previous map version."}
         </p>
 
         <form onSubmit={handleSubmit} className="mgmt-form">
@@ -1686,6 +1734,7 @@ function MapUploadModal({ onClose, onSaved }) {
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g. Campus Layout 2026, Main Campus Spring"
+              disabled={uploading}
             />
           </label>
 
@@ -1696,22 +1745,28 @@ function MapUploadModal({ onClose, onSaved }) {
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Details on newly added buildings or revised boundaries"
+              disabled={uploading}
             />
           </label>
 
           <label>
-            Map Image File * (Max 10 MB: JPEG, PNG, WebP)
+            {isEditing
+              ? "Replace Map Image (Optional, max 10 MB: JPEG, PNG, WebP)"
+              : "Map Image File * (Max 10 MB: JPEG, PNG, WebP)"}
             <input
               type="file"
               accept="image/jpeg,image/png,image/webp"
-              required
+              required={!isEditing && !previewUrl}
               onChange={handleFileChange}
+              disabled={uploading}
             />
           </label>
 
           {previewUrl && (
             <div className="image-preview-box">
-              <p className="preview-label">Client preview:</p>
+              <p className="preview-label">
+                {file ? "New file preview:" : "Current map preview:"}
+              </p>
               <img
                 src={previewUrl}
                 alt="Preview"
@@ -1720,14 +1775,17 @@ function MapUploadModal({ onClose, onSaved }) {
             </div>
           )}
 
-          <label className="checkbox-label" style={{ marginTop: "12px" }}>
-            <input
-              type="checkbox"
-              checked={activateImmediately}
-              onChange={(e) => setActivateImmediately(e.target.checked)}
-            />
-            Set as active campus map for new reports immediately
-          </label>
+          {!isEditing && (
+            <label className="checkbox-label" style={{ marginTop: "12px" }}>
+              <input
+                type="checkbox"
+                checked={activateImmediately}
+                onChange={(e) => setActivateImmediately(e.target.checked)}
+                disabled={uploading}
+              />
+              Set as active campus map for new reports immediately
+            </label>
+          )}
 
           {error && <p className="form-error">{error}</p>}
 
@@ -1741,7 +1799,11 @@ function MapUploadModal({ onClose, onSaved }) {
               Cancel
             </button>
             <button type="submit" className="primary" disabled={uploading}>
-              {uploading ? "Uploading & validating..." : "Upload map"}
+              {uploading
+                ? "Saving map..."
+                : isEditing
+                  ? "Save changes"
+                  : "Upload map"}
             </button>
           </div>
         </form>
