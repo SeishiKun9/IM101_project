@@ -17,6 +17,7 @@ import { useAuth } from "./context/AuthContext.jsx";
 import DashboardPage from "./pages/DashboardPage.jsx";
 import MyReportsPage from "./pages/MyReportsPage.jsx";
 import WorkspacePage from "./pages/WorkspacePage.jsx";
+import ProfilePage from "./pages/ProfilePage.jsx";
 
 export default function App() {
   const { user } = useAuth();
@@ -91,6 +92,11 @@ export default function App() {
     setPendingAction(null);
     if (action) {
       action();
+      return;
+    }
+
+    if (location.pathname === "/profile") {
+      navigate("/profile");
       return;
     }
 
@@ -209,6 +215,17 @@ export default function App() {
                   loadItems();
                   loadReports();
                 }}
+                onRequireLogin={() => {
+                  setAuthMode("signin");
+                  setAuthOpen(true);
+                }}
+              />
+            }
+          />
+          <Route
+            path="/profile"
+            element={
+              <ProfilePage
                 onRequireLogin={() => {
                   setAuthMode("signin");
                   setAuthOpen(true);

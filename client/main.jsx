@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import App from "./src/App.jsx";
 import { AuthProvider } from "./src/context/AuthContext.jsx";
+import { ThemeProvider } from "./src/context/ThemeContext.jsx";
 import "./assets/css/styles.css";
 import "./assets/css/portal.css";
 
@@ -13,7 +14,9 @@ if (container) {
     <React.StrictMode>
       <BrowserRouter>
         <AuthProvider>
-          <App />
+          <ThemeProvider>
+            <App />
+          </ThemeProvider>
         </AuthProvider>
       </BrowserRouter>
     </React.StrictMode>,

@@ -223,6 +223,12 @@ async function migrate() {
       );
     }
 
+    console.log("Running migration 004_profile_and_theme...");
+    const sql004Path = path.join(__dirname, "004_profile_and_theme.sql");
+    const sql004 = fs.readFileSync(sql004Path, "utf8");
+    await client.query(sql004);
+    console.log("Applied migration 004 successfully.");
+
     await client.query("COMMIT");
     console.log("Migration completed successfully!");
   } catch (err) {
