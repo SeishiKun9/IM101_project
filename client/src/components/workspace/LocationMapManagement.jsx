@@ -182,6 +182,50 @@ export default function LocationMapManagement() {
     }
   }
 
+  async function handleArchiveInstead() {
+    const { type, item } = impactModal;
+    setImpactModal({
+      open: false,
+      type: "",
+      action: "",
+      item: null,
+      impact: null,
+    });
+    if (!type || !item) return;
+
+    const plural =
+      type === "building"
+        ? "buildings"
+        : type === "floor"
+          ? "floors"
+          : type === "room"
+            ? "rooms"
+            : "maps";
+
+    try {
+      if (type === "map") {
+        await apiRequest(`/admin/maps/${item.id}/archive`, {
+          method: "POST",
+        });
+        showMessage(
+          "success",
+          `Map "${item.name}" version ${item.version} was archived.`,
+        );
+      } else {
+        await apiRequest(`/admin/locations/${plural}/${item.id}/archive`, {
+          method: "POST",
+        });
+        showMessage(
+          "success",
+          `${type.charAt(0).toUpperCase() + type.slice(1)} "${item.name}" was archived.`,
+        );
+      }
+      loadData();
+    } catch (err) {
+      showMessage("error", err.message);
+    }
+  }
+
   async function handleRestore(type, item) {
     const plural =
       type === "building" ? "buildings" : type === "floor" ? "floors" : "rooms";
@@ -1048,6 +1092,7 @@ export default function LocationMapManagement() {
             })
           }
           onConfirm={executeImpactAction}
+          onArchiveInstead={handleArchiveInstead}
         />
       )}
 
@@ -1705,12 +1750,21 @@ function MapUploadModal({ onClose, onSaved }) {
   );
 }
 
-function ImpactConfirmModal({ modalState, onCancel, onConfirm }) {
+function ImpactConfirmModal({
+  modalState,
+  onCancel,
+  onConfirm,
+  onArchiveInstead,
+}) {
   const { type, action, item, impact } = modalState;
   const isDelete = action === "delete";
 
   const typeName = type.charAt(0).toUpperCase() + type.slice(1);
   const canDelete = impact?.canDelete !== false;
+
+  const childFloors = impact?.floorsCount ?? impact?.totalFloors;
+  const childRooms = impact?.roomsCount ?? impact?.totalRooms;
+  const reportsCount = Number(impact?.reportsCount ?? 0);
 
   return (
     <div className="modal-backdrop">
@@ -1755,19 +1809,27 @@ function ImpactConfirmModal({ modalState, onCancel, onConfirm }) {
                 <strong>Associated Dependencies:</strong>
               </p>
               <ul>
-                {impact?.floorsCount !== undefined && (
+                {childFloors !== undefined && (
                   <li>
-                    Child floors: <strong>{impact.floorsCount}</strong>
+                    Child floors: <strong>{childFloors}</strong>
+                    {impact?.activeFloors !== undefined &&
+                      impact.activeFloors !== childFloors && (
+                        <span> ({impact.activeFloors} active)</span>
+                      )}
                   </li>
                 )}
-                {impact?.roomsCount !== undefined && (
+                {childRooms !== undefined && (
                   <li>
-                    Child rooms: <strong>{impact.roomsCount}</strong>
+                    Child rooms: <strong>{childRooms}</strong>
+                    {impact?.activeRooms !== undefined &&
+                      impact.activeRooms !== childRooms && (
+                        <span> ({impact.activeRooms} active)</span>
+                      )}
                   </li>
                 )}
                 <li>
                   Historical reports referencing this location:{" "}
-                  <strong>{impact?.reportsCount ?? 0}</strong>
+                  <strong>{reportsCount}</strong>
                 </li>
               </ul>
             </div>
@@ -1779,10 +1841,52 @@ function ImpactConfirmModal({ modalState, onCancel, onConfirm }) {
                     <strong>Permanent deletion is not allowed.</strong>
                   </p>
                   <p>
-                    This {type} cannot be deleted because it is referenced by
-                    existing child records or historical reports. To remove it
-                    from future report dropdowns while preserving history,
-                    choose <strong>Archive</strong> instead.
+                    This {type} cannot be deleted because it is referenced by:
+                  </p>
+                  <ul
+                    style={{
+                      margin: "6px 0 10px 18px",
+                      paddingLeft: "10px",
+                    }}
+                  >
+                    {childFloors > 0 && (
+                      <li>
+                        <strong>{childFloors}</strong> child floor(s)
+                      </li>
+                    )}
+                    {childRooms > 0 && (
+                      <li>
+                        <strong>{childRooms}</strong> child room(s)
+                      </li>
+                    )}
+                    {reportsCount > 0 && (
+                      <li>
+                        <strong>{reportsCount}</strong> historical report(s)
+                      </li>
+                    )}
+                  </ul>
+                  <p>
+                    {childRooms > 0 || childFloors > 0 ? (
+                      <>
+                        To permanently delete this {type}, you must first delete
+                        or reassign its child{" "}
+                        {childRooms > 0 && childFloors > 0
+                          ? "floors and rooms"
+                          : childFloors > 0
+                            ? "floors"
+                            : "rooms"}
+                        .
+                        <br />
+                        Alternatively, choose <strong>Archive instead</strong>{" "}
+                        to safely remove it from future report dropdowns while
+                        preserving all history.
+                      </>
+                    ) : (
+                      <>
+                        To preserve historical reports referencing this {type},
+                        choose <strong>Archive instead</strong>.
+                      </>
+                    )}
                   </p>
                 </div>
               ) : (
@@ -1811,6 +1915,15 @@ function ImpactConfirmModal({ modalState, onCancel, onConfirm }) {
           <button type="button" className="secondary" onClick={onCancel}>
             Cancel
           </button>
+          {isDelete && !canDelete && (
+            <button
+              type="button"
+              className="primary"
+              onClick={onArchiveInstead}
+            >
+              Archive instead
+            </button>
+          )}
           {(!isDelete || canDelete) && (
             <button
               type="button"

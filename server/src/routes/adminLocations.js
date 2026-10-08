@@ -70,6 +70,9 @@ export function createAdminLocationsRouter({
       res.json({
         building: buildingRes.rows[0],
         ...counts,
+        floorsCount: Number(counts.totalFloors),
+        roomsCount: Number(counts.totalRooms),
+        reportsCount: Number(counts.reportsCount),
         canDelete: Number(counts.totalFloors) === 0 && Number(counts.reportsCount) === 0,
       });
     }),
@@ -416,6 +419,8 @@ export function createAdminLocationsRouter({
       res.json({
         floor: floorRes.rows[0],
         ...counts,
+        roomsCount: Number(counts.totalRooms),
+        reportsCount: Number(counts.reportsCount),
         canDelete: Number(counts.totalRooms) === 0 && Number(counts.reportsCount) === 0,
       });
     }),
