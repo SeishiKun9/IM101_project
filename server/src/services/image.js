@@ -10,15 +10,17 @@ export function validateAndSaveImage(
   if (!base64Data || typeof base64Data !== "string") {
     throw new Error("No image data provided.");
   }
-  const match = base64Data.match(/^data:image\/(jpeg|jpg|png|webp);base64,(.+)$/i);
-  if (!match) {
-    throw new Error(
-      "Unsupported image format. Allowed formats: JPEG, PNG, WebP.",
-    );
+
+  let rawBase64 = base64Data.trim();
+  const commaIndex = rawBase64.indexOf(",");
+  if (commaIndex !== -1 && rawBase64.startsWith("data:")) {
+    rawBase64 = rawBase64.slice(commaIndex + 1);
   }
-  const ext =
-    match[1].toLowerCase() === "jpeg" ? "jpg" : match[1].toLowerCase();
-  const buffer = Buffer.from(match[2], "base64");
+
+  // Strip all whitespace/newlines that might occur in base64 strings
+  rawBase64 = rawBase64.replace(/\s+/g, "");
+
+  const buffer = Buffer.from(rawBase64, "base64");
   const MAX_SIZE = 10 * 1024 * 1024; // 10 MB
   if (buffer.length > MAX_SIZE) {
     throw new Error("File exceeds the maximum allowed size of 10 MB.");
@@ -28,8 +30,13 @@ export function validateAndSaveImage(
   }
 
   // Magic byte checks
-  const isJpeg = buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+  const isJpeg =
+    buffer.length >= 3 &&
+    buffer[0] === 0xff &&
+    buffer[1] === 0xd8 &&
+    buffer[2] === 0xff;
   const isPng =
+    buffer.length >= 4 &&
     buffer[0] === 0x89 &&
     buffer[1] === 0x50 &&
     buffer[2] === 0x4e &&
@@ -40,8 +47,13 @@ export function validateAndSaveImage(
     buffer.slice(8, 12).toString() === "WEBP";
 
   if (!isJpeg && !isPng && !isWebp) {
-    throw new Error("Invalid image file contents. Header check failed.");
+    throw new Error(
+      "Invalid image file contents. Header check failed. Only JPEG, PNG, and WebP images are supported.",
+    );
   }
+
+  const ext = isJpeg ? "jpg" : isPng ? "png" : "webp";
+  const mimeType = isJpeg ? "image/jpeg" : isPng ? "image/png" : "image/webp";
 
   if (!fs.existsSync(targetDir)) {
     fs.mkdirSync(targetDir, { recursive: true });
@@ -55,6 +67,6 @@ export function validateAndSaveImage(
     filename,
     relativePath: `/uploads/maps/${filename}`,
     fileSize: buffer.length,
-    mimeType: `image/${match[1].toLowerCase() === "jpg" ? "jpeg" : match[1].toLowerCase()}`,
+    mimeType,
   };
 }
