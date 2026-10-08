@@ -2,6 +2,8 @@ import React, { useState } from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import { roleNames } from "../constants/statuses.js";
 import { useAuth } from "../context/AuthContext.jsx";
+import UserMenu, { getInitials } from "./UserMenu.jsx";
+import ThemeSelector, { GuestThemeToggle } from "./ThemeSelector.jsx";
 
 export default function Header({ onAuth }) {
   const { user, logout } = useAuth();
@@ -19,6 +21,7 @@ export default function Header({ onAuth }) {
   }
 
   const roleLabel = user ? roleNames[user.role] || user.role : null;
+  const initials = user ? getInitials(user.name) : "";
 
   return (
     <header className="topbar">
@@ -90,33 +93,21 @@ export default function Header({ onAuth }) {
           )}
         </nav>
 
-        {/* Right side: User info / Sign in & Mobile menu toggle */}
+        {/* Right side: User dropdown or Guest Theme + Sign in */}
         <div className="topbar-actions">
           {user ? (
-            <div className="user-profile-menu">
-              <span className={`user-role-badge ${user.role}`}>
-                {roleLabel}
-              </span>
-              <span className="user-greeting" title={user.email}>
-                {user.name.split(" ")[0]}
-              </span>
+            <UserMenu onNavigate={closeMobile} />
+          ) : (
+            <div className="guest-header-actions">
+              <GuestThemeToggle />
               <button
-                className="btn btn-secondary btn-sm"
-                onClick={handleLogout}
+                className="btn btn-primary btn-sm"
+                onClick={onAuth}
                 type="button"
-                aria-label="Sign out"
               >
-                Sign out
+                Sign in
               </button>
             </div>
-          ) : (
-            <button
-              className="btn btn-primary btn-sm"
-              onClick={onAuth}
-              type="button"
-            >
-              Sign in
-            </button>
           )}
 
           {/* Mobile hamburger button */}
@@ -198,16 +189,39 @@ export default function Header({ onAuth }) {
               </NavLink>
             )}
 
+            {user && (
+              <NavLink
+                to="/profile"
+                className={({ isActive }) =>
+                  isActive ? "mobile-nav-link active" : "mobile-nav-link"
+                }
+                onClick={closeMobile}
+              >
+                My Profile
+              </NavLink>
+            )}
+
             <div className="mobile-drawer-footer">
               {user ? (
                 <div className="mobile-user-box">
-                  <div className="mobile-user-info">
-                    <strong>{user.name}</strong>
-                    <small>{user.email}</small>
-                    <span className={`user-role-badge ${user.role}`}>
-                      {roleLabel}
-                    </span>
+                  <div className="mobile-user-info-row">
+                    <div className="mobile-avatar-circle" aria-hidden="true">
+                      {initials}
+                    </div>
+                    <div className="mobile-user-info">
+                      <strong>{user.name}</strong>
+                      <small>{user.email}</small>
+                      <span className={`user-role-badge ${user.role}`}>
+                        {roleLabel}
+                      </span>
+                    </div>
                   </div>
+
+                  <div className="mobile-appearance-box">
+                    <label className="mobile-section-label">Appearance</label>
+                    <ThemeSelector variant="segmented" />
+                  </div>
+
                   <button
                     className="btn btn-secondary full"
                     onClick={handleLogout}
@@ -217,16 +231,22 @@ export default function Header({ onAuth }) {
                   </button>
                 </div>
               ) : (
-                <button
-                  className="btn btn-primary full"
-                  onClick={() => {
-                    closeMobile();
-                    onAuth();
-                  }}
-                  type="button"
-                >
-                  Sign in to Campus Account
-                </button>
+                <div className="mobile-guest-box">
+                  <div className="mobile-appearance-box" style={{ marginBottom: "16px" }}>
+                    <label className="mobile-section-label">Appearance</label>
+                    <ThemeSelector variant="segmented" />
+                  </div>
+                  <button
+                    className="btn btn-primary full"
+                    onClick={() => {
+                      closeMobile();
+                      onAuth();
+                    }}
+                    type="button"
+                  >
+                    Sign in to Campus Account
+                  </button>
+                </div>
               )}
             </div>
           </nav>

@@ -9,6 +9,7 @@ import { createLocationsRouter } from "./routes/locations.js";
 import { createMapsRouter } from "./routes/maps.js";
 import { createAdminLocationsRouter } from "./routes/adminLocations.js";
 import { createAdminMapsRouter } from "./routes/adminMaps.js";
+import { createProfileRouter } from "./routes/profile.js";
 
 const { Pool } = pg;
 const app = express();
@@ -102,7 +103,32 @@ function verifyPassword(password, stored) {
   );
 }
 function safeUser(row) {
-  return { id: row.user_id, name: row.name, email: row.email, role: row.role };
+  return {
+    id: String(row.user_id),
+    name: row.name,
+    email: row.email,
+    role: row.role,
+    contactNumber: row.contact_number || null,
+    defaultAnonymous: Boolean(row.default_anonymous),
+    defaultHidePhone: row.default_hide_phone !== false,
+    themePreference: row.theme_preference || "system",
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+function updateSessionsForUser(userId, updatedUserData) {
+  for (const [token, sessionUser] of sessions.entries()) {
+    if (String(sessionUser.id) === String(userId)) {
+      sessions.set(token, { ...sessionUser, ...updatedUserData });
+    }
+  }
+}
+function invalidateSessionsForUser(userId) {
+  for (const [token, sessionUser] of sessions.entries()) {
+    if (String(sessionUser.id) === String(userId)) {
+      sessions.delete(token);
+    }
+  }
 }
 async function startSession(user) {
   const token = crypto.randomBytes(32).toString("hex");
@@ -111,8 +137,23 @@ async function startSession(user) {
 }
 async function findUser(email) {
   const result = await pool.query(
-    "SELECT user_id, name, email, password_hash, role FROM users WHERE email = $1",
+    `SELECT user_id, name, email, password_hash, role,
+            contact_number, default_anonymous, default_hide_phone,
+            theme_preference, created_at, updated_at
+     FROM users
+     WHERE email = $1`,
     [email],
+  );
+  return result.rows[0];
+}
+async function findUserById(userId) {
+  const result = await pool.query(
+    `SELECT user_id, name, email, password_hash, role,
+            contact_number, default_anonymous, default_hide_phone,
+            theme_preference, created_at, updated_at
+     FROM users
+     WHERE user_id = $1`,
+    [userId],
   );
   return result.rows[0];
 }
@@ -149,6 +190,20 @@ app.use(
     requireDatabase,
     requireAuth,
     requireRole,
+  }),
+);
+app.use(
+  "/api/profile",
+  createProfileRouter({
+    pool,
+    asyncRoute,
+    requireDatabase,
+    requireAuth,
+    safeUser,
+    verifyPassword,
+    hashPassword,
+    updateSessionsForUser,
+    invalidateSessionsForUser,
   }),
 );
 
@@ -278,8 +333,20 @@ app.post("/api/auth/logout", requireAuth, (req, res) => {
   sessions.delete(tokenFrom(req));
   res.status(204).end();
 });
-app.get("/api/auth/me", requireAuth, (req, res) =>
-  res.json({ user: req.user }),
+app.get(
+  "/api/auth/me",
+  requireDatabase,
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const userRow = await findUserById(req.user.id);
+    if (!userRow) {
+      sessions.delete(tokenFrom(req));
+      return res.status(401).json({ error: "User no longer exists." });
+    }
+    const fresh = safeUser(userRow);
+    sessions.set(tokenFrom(req), fresh);
+    res.json({ user: fresh });
+  }),
 );
 
 app.get(

@@ -1,17 +1,37 @@
 import React, { useEffect, useRef, useState } from "react";
 import { apiRequest } from "../api/client.js";
+import { useAuth } from "../context/AuthContext.jsx";
 
 export default function ReportFormModal({
   onClose,
   onSaved,
   initialType = "lost",
 }) {
+  const { user } = useAuth();
   const [error, setError] = useState("");
   const [pin, setPin] = useState(null);
   const [imagePreview, setImagePreview] = useState("");
   const [reportType, setReportType] = useState(initialType || "lost");
   const [submitting, setSubmitting] = useState(false);
   const fileInputRef = useRef(null);
+
+  // User prefill & privacy preferences (defaults from profile)
+  const [reporterName, setReporterName] = useState(user?.name || "");
+  const [contactPhone, setContactPhone] = useState(user?.contactNumber || "");
+  const [isAnonymous, setIsAnonymous] = useState(Boolean(user?.defaultAnonymous));
+  const [hidePhone, setHidePhone] = useState(
+    user?.defaultHidePhone !== undefined ? Boolean(user.defaultHidePhone) : true,
+  );
+  const hasUserEditedRef = useRef(false);
+
+  useEffect(() => {
+    if (user && !hasUserEditedRef.current) {
+      if (!reporterName && user.name) setReporterName(user.name);
+      if (!contactPhone && user.contactNumber) setContactPhone(user.contactNumber);
+      if (user.defaultAnonymous !== undefined) setIsAnonymous(Boolean(user.defaultAnonymous));
+      if (user.defaultHidePhone !== undefined) setHidePhone(Boolean(user.defaultHidePhone));
+    }
+  }, [user]);
 
   // Dynamic location states
   const [locations, setLocations] = useState([]);
@@ -152,14 +172,10 @@ export default function ReportFormModal({
           building: currentBuilding?.name || "",
           floor: currentFloor?.name || "",
           room: currentRoom?.name || "",
-          location:
-            currentRoom?.name ||
-            currentFloor?.name ||
-            currentBuilding?.name ||
-            "Campus",
-          contactPhone: data.contact,
-          isAnonymous: Boolean(formData.get("isAnonymous")),
-          hidePhone: Boolean(formData.get("hidePhone")),
+          reporterName: reporterName.trim() || undefined,
+          contactPhone: contactPhone.trim() || null,
+          isAnonymous: Boolean(isAnonymous),
+          hidePhone: Boolean(hidePhone),
           mapId: pin && activeMap ? activeMap.id : null,
           mapX: pin?.x || null,
           mapY: pin?.y || null,
@@ -287,19 +303,27 @@ export default function ReportFormModal({
                 />
               </div>
 
-              {reportType === "found" && (
-                <div className="form-group">
-                  <label htmlFor="finder-input">
-                    Finder&rsquo;s Full Name <span className="req">*</span>
-                  </label>
-                  <input
-                    id="finder-input"
-                    name="reporterName"
-                    required
-                    placeholder="Full name of finder"
-                  />
-                </div>
-              )}
+              <div className="form-group">
+                <label htmlFor="reporter-input">
+                  {reportType === "found" ? "Finder's Full Name" : "Reporter's Full Name"}{" "}
+                  {reportType === "found" ? (
+                    <span className="req">*</span>
+                  ) : (
+                    <span className="opt">(prefilled)</span>
+                  )}
+                </label>
+                <input
+                  id="reporter-input"
+                  name="reporterName"
+                  value={reporterName}
+                  required={reportType === "found"}
+                  onChange={(e) => {
+                    hasUserEditedRef.current = true;
+                    setReporterName(e.target.value);
+                  }}
+                  placeholder="Full name"
+                />
+              </div>
             </div>
 
             <div className="form-group">
@@ -488,11 +512,20 @@ export default function ReportFormModal({
                 id="contact-input"
                 name="contact"
                 type="tel"
+                value={contactPhone}
+                onChange={(e) => {
+                  hasUserEditedRef.current = true;
+                  setContactPhone(e.target.value);
+                }}
                 required={reportType === "found"}
-                placeholder="e.g. 09123456789"
+                placeholder="e.g. 09123456789 or +639123456789"
               />
               <span className="field-hint">
-                Used by verifiers to contact you regarding item handover.
+                {user?.contactNumber
+                  ? "Prefilled from your saved profile contact."
+                  : reportType === "found"
+                    ? "Required for found items so campus verifiers can coordinate handover."
+                    : "Used by verifiers to contact you regarding item recovery."}
               </span>
             </div>
 
@@ -577,12 +610,28 @@ export default function ReportFormModal({
             {/* Privacy Checkboxes */}
             <div className="privacy-checkboxes-group">
               <label className="checkbox-control">
-                <input name="isAnonymous" type="checkbox" />
-                <span>Remain anonymous on public dashboard</span>
+                <input
+                  name="isAnonymous"
+                  type="checkbox"
+                  checked={isAnonymous}
+                  onChange={(e) => {
+                    hasUserEditedRef.current = true;
+                    setIsAnonymous(e.target.checked);
+                  }}
+                />
+                <span>Remain anonymous on public dashboard (hide my name)</span>
               </label>
 
               <label className="checkbox-control">
-                <input name="hidePhone" type="checkbox" defaultChecked />
+                <input
+                  name="hidePhone"
+                  type="checkbox"
+                  checked={hidePhone}
+                  onChange={(e) => {
+                    hasUserEditedRef.current = true;
+                    setHidePhone(e.target.checked);
+                  }}
+                />
                 <span>Hide my phone number from general student view</span>
               </label>
             </div>
