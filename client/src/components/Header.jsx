@@ -1,5 +1,6 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
+import { apiRequest } from "../api/client.js";
 import { roleNames } from "../constants/statuses.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import UserMenu, { getInitials } from "./UserMenu.jsx";
@@ -9,6 +10,45 @@ export default function Header({ onAuth }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [campusLogo, setCampusLogo] = useState(null);
+  const [logoLoadError, setLogoLoadError] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+    function fetchLogo(event) {
+      if (event?.detail) {
+        setCampusLogo(event.detail);
+        setLogoLoadError(false);
+        return;
+      }
+      apiRequest("/campus/logo?t=" + Date.now())
+        .then((data) => {
+          if (isMounted && data?.logo) {
+            setCampusLogo(data.logo);
+            setLogoLoadError(false);
+          }
+        })
+        .catch(() => {
+          // Silently keep default SVG
+        });
+    }
+
+    fetchLogo();
+    window.addEventListener("campus-logo-changed", fetchLogo);
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener("campus-logo-changed", fetchLogo);
+    };
+  }, []);
+
+  const logoSrc = React.useMemo(() => {
+    if (!campusLogo?.image_url && !campusLogo?.imageUrl) return null;
+    const url = campusLogo.image_url || campusLogo.imageUrl;
+    if (url.startsWith("data:") || url.startsWith("blob:")) return url;
+    const ts = campusLogo.updatedAt ? new Date(campusLogo.updatedAt).getTime() : Date.now();
+    return url.includes("?") ? `${url}&t=${ts}` : `${url}?t=${ts}`;
+  }, [campusLogo?.image_url, campusLogo?.imageUrl, campusLogo?.updatedAt]);
 
   async function handleLogout() {
     setMobileMenuOpen(false);
@@ -27,23 +67,67 @@ export default function Header({ onAuth }) {
     <header className="topbar">
       <div className="topbar-container">
         <Link className="brand" to="/" onClick={closeMobile}>
-          <span className="brand-mark" aria-hidden="true">
-            <svg
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <circle cx="11" cy="11" r="8" />
-              <line x1="21" y1="21" x2="16.65" y2="16.65" />
-            </svg>
+          <span
+            className={`brand-mark ${logoSrc && !logoLoadError ? "brand-logo-mark" : ""}`}
+            aria-hidden="true"
+            style={
+              logoSrc && !logoLoadError
+                ? {
+                    width: "42px",
+                    height: "42px",
+                    minWidth: "42px",
+                    background: "#ffffff",
+                    padding: "2px",
+                    border: "1px solid var(--border)",
+                    borderRadius: "8px",
+                    boxShadow: "0 1px 4px rgba(0, 0, 0, 0.08)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    overflow: "hidden",
+                  }
+                : {}
+            }
+          >
+            {logoSrc && !logoLoadError ? (
+              <img
+                key={logoSrc}
+                src={logoSrc}
+                alt={campusLogo.alt_text || campusLogo.name || "Campus logo"}
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "contain",
+                  borderRadius: "6px",
+                  display: "block",
+                }}
+                onError={() => setLogoLoadError(true)}
+                onLoad={() => setLogoLoadError(false)}
+              />
+            ) : (
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+            )}
           </span>
           <span className="brand-text">
-            Campus <span className="brand-accent">Lost &amp; Found</span>
+            {campusLogo?.name ? (
+              <span>{campusLogo.name}</span>
+            ) : (
+              <>
+                Campus <span className="brand-accent">Lost &amp; Found</span>
+              </>
+            )}
           </span>
         </Link>
 

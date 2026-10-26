@@ -46,14 +46,24 @@ export function validateAndSaveImage(
     buffer.slice(0, 4).toString() === "RIFF" &&
     buffer.slice(8, 12).toString() === "WEBP";
 
-  if (!isJpeg && !isPng && !isWebp) {
+  const isSvg =
+    buffer.slice(0, 256).toString("utf8").toLowerCase().includes("<svg") ||
+    buffer.slice(0, 256).toString("utf8").toLowerCase().includes("<?xml");
+
+  if (!isJpeg && !isPng && !isWebp && !isSvg) {
     throw new Error(
-      "Invalid image file contents. Header check failed. Only JPEG, PNG, and WebP images are supported.",
+      "Invalid image file contents. Header check failed. Only JPEG, PNG, WebP, and SVG images are supported.",
     );
   }
 
-  const ext = isJpeg ? "jpg" : isPng ? "png" : "webp";
-  const mimeType = isJpeg ? "image/jpeg" : isPng ? "image/png" : "image/webp";
+  const ext = isJpeg ? "jpg" : isPng ? "png" : isWebp ? "webp" : "svg";
+  const mimeType = isJpeg
+    ? "image/jpeg"
+    : isPng
+      ? "image/png"
+      : isWebp
+        ? "image/webp"
+        : "image/svg+xml";
 
   if (!fs.existsSync(targetDir)) {
     fs.mkdirSync(targetDir, { recursive: true });
@@ -63,9 +73,11 @@ export function validateAndSaveImage(
   const fullPath = path.join(targetDir, filename);
   fs.writeFileSync(fullPath, buffer);
 
+  const subfolder = path.basename(targetDir) || "maps";
+
   return {
     filename,
-    relativePath: `/uploads/maps/${filename}`,
+    relativePath: `/uploads/${subfolder}/${filename}`,
     fileSize: buffer.length,
     mimeType,
   };

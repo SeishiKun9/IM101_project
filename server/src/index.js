@@ -10,6 +10,17 @@ import { createMapsRouter } from "./routes/maps.js";
 import { createAdminLocationsRouter } from "./routes/adminLocations.js";
 import { createAdminMapsRouter } from "./routes/adminMaps.js";
 import { createProfileRouter } from "./routes/profile.js";
+import { createAdminAuditRouter } from "./routes/adminAudit.js";
+import { createCampusLogoRouter } from "./routes/campusLogo.js";
+import {
+  logCreate,
+  logUpdate,
+  logDelete,
+  logStatusChange,
+  logAuthEvent,
+  logFailure,
+  setAuditContext,
+} from "./services/audit.js";
 
 const { Pool } = pg;
 const app = express();
@@ -105,6 +116,7 @@ function verifyPassword(password, stored) {
 function safeUser(row) {
   return {
     id: String(row.user_id),
+    username: row.username || (row.email ? row.email.split("@")[0] : row.name),
     name: row.name,
     email: row.email,
     role: row.role,
@@ -135,20 +147,21 @@ async function startSession(user) {
   sessions.set(token, safeUser(user));
   return { token, user: safeUser(user) };
 }
-async function findUser(email) {
+async function findUser(emailOrUsername) {
+  const clean = String(emailOrUsername || "").trim();
   const result = await pool.query(
-    `SELECT user_id, name, email, password_hash, role,
+    `SELECT user_id, username, name, email, password_hash, role,
             contact_number, default_anonymous, default_hide_phone,
             theme_preference, created_at, updated_at
      FROM users
-     WHERE email = $1`,
-    [email],
+     WHERE LOWER(email) = LOWER($1) OR LOWER(username) = LOWER($1)`,
+    [clean],
   );
   return result.rows[0];
 }
 async function findUserById(userId) {
   const result = await pool.query(
-    `SELECT user_id, name, email, password_hash, role,
+    `SELECT user_id, username, name, email, password_hash, role,
             contact_number, default_anonymous, default_hide_phone,
             theme_preference, created_at, updated_at
      FROM users
@@ -173,8 +186,8 @@ app.use(
 );
 app.use("/api/maps", createMapsRouter({ pool, asyncRoute, requireDatabase }));
 app.use(
-  "/api/admin",
-  createAdminLocationsRouter({
+  "/api/admin/audit-logs",
+  createAdminAuditRouter({
     pool,
     asyncRoute,
     requireDatabase,
@@ -185,6 +198,37 @@ app.use(
 app.use(
   "/api/admin/maps",
   createAdminMapsRouter({
+    pool,
+    asyncRoute,
+    requireDatabase,
+    requireAuth,
+    requireRole,
+  }),
+);
+app.use(
+  "/api/admin",
+  createAdminLocationsRouter({
+    pool,
+    asyncRoute,
+    requireDatabase,
+    requireAuth,
+    requireRole,
+  }),
+);
+
+app.use(
+  "/api/campus",
+  createCampusLogoRouter({
+    pool,
+    asyncRoute,
+    requireDatabase,
+    requireAuth,
+    requireRole,
+  }),
+);
+app.use(
+  "/api",
+  createCampusLogoRouter({
     pool,
     asyncRoute,
     requireDatabase,
@@ -262,16 +306,31 @@ app.post(
   "/api/auth/login",
   requireDatabase,
   asyncRoute(async (req, res) => {
-    const user = await findUser(
-      String(req.body.email || "")
-        .trim()
-        .toLowerCase(),
-    );
-    if (!user || !verifyPassword(req.body.password || "", user.password_hash))
+    const emailOrUsername = String(req.body.email || "")
+      .trim()
+      .toLowerCase();
+    const user = await findUser(emailOrUsername);
+    if (!user || !verifyPassword(req.body.password || "", user.password_hash)) {
+      await logFailure(pool, {
+        actor: { username: emailOrUsername || "anonymous" },
+        action: "LOGIN",
+        entityType: "auth",
+        description: `Failed login attempt with identifier "${emailOrUsername}"`,
+        error: "Email or password does not match.",
+        req,
+      });
       return res
         .status(401)
         .json({ error: "Email or password does not match." });
-    res.json(await startSession(user));
+    }
+    const session = await startSession(user);
+    await logAuthEvent(pool, {
+      actor: session.user,
+      action: "LOGIN",
+      description: `User "${session.user.name}" (${session.user.username}) signed in successfully`,
+      req,
+    });
+    res.json(session);
   }),
 );
 
@@ -329,10 +388,23 @@ app.post(
     res.json({ message: "Password reset successfully. You can sign in now." });
   }),
 );
-app.post("/api/auth/logout", requireAuth, (req, res) => {
-  sessions.delete(tokenFrom(req));
-  res.status(204).end();
-});
+
+app.post(
+  "/api/auth/logout",
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    if (req.user) {
+      await logAuthEvent(pool, {
+        actor: req.user,
+        action: "LOGOUT",
+        description: `User "${req.user.name}" (${req.user.username}) signed out`,
+        req,
+      });
+    }
+    sessions.delete(tokenFrom(req));
+    res.status(204).end();
+  }),
+);
 app.get(
   "/api/auth/me",
   requireDatabase,
@@ -410,14 +482,9 @@ app.post(
   requireAuth,
   asyncRoute(async (req, res) => {
     const {
-      itemType,
       title,
       description,
-      dateReported,
       category = "Campus report",
-      buildingId,
-      floorId,
-      roomId,
       locationDescription,
       building: legacyBuilding,
       floor: legacyFloor,
@@ -432,6 +499,12 @@ app.post(
       mapY,
       image,
     } = req.body;
+
+    const itemType = req.body.itemType || req.body.type;
+    const dateReported = req.body.dateReported || req.body.date;
+    const buildingId = req.body.buildingId || req.body.building_id;
+    const floorId = req.body.floorId || req.body.floor_id;
+    const roomId = req.body.roomId || req.body.room_id;
 
     if (
       !itemType ||
@@ -613,6 +686,7 @@ app.post(
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+      await setAuditContext(client, req.user, req);
       const categoryResult = await client.query(
         "INSERT INTO categories (category_name) VALUES ($1) ON CONFLICT (category_name) DO UPDATE SET category_name = EXCLUDED.category_name RETURNING category_id",
         [category],
@@ -675,6 +749,26 @@ app.post(
           [item.rows[0].item_id, image],
         );
       }
+
+      await logCreate(client, {
+        actor: req.user,
+        entityType: "items",
+        entityId: item.rows[0].item_id,
+        description: `${req.user.name} reported ${itemType} item: "${title.trim()}"`,
+        newValues: {
+          itemId: item.rows[0].item_id,
+          itemType,
+          title: title.trim(),
+          description: description.trim(),
+          dateReported,
+          category,
+          status: "reported",
+          reporterName: reporterName || req.user.name,
+          isAnonymous: Boolean(isAnonymous),
+          locationSnapshot,
+        },
+        req,
+      });
 
       await client.query("COMMIT");
       res.status(201).json({ id: item.rows[0].item_id });
@@ -758,6 +852,12 @@ app.patch(
       }
     }
 
+    const oldItemRes = await pool.query(
+      "SELECT item_id, building_id, floor_id, room_id, location_description, map_id, map_x, map_y, location_snapshot FROM items WHERE item_id = $1",
+      [req.params.itemId],
+    );
+    const oldItem = oldItemRes.rows[0];
+
     const snapshot = {
       buildingName: bName,
       floorName: fName,
@@ -785,6 +885,25 @@ app.patch(
         req.params.itemId,
       ],
     );
+
+    await logUpdate(pool, {
+      actor: req.user,
+      entityType: "items",
+      entityId: req.params.itemId,
+      description: `Updated location for item #${req.params.itemId}`,
+      oldValues: oldItem,
+      newValues: {
+        buildingId: buildingId || null,
+        floorId: floorId || null,
+        roomId: roomId || null,
+        locationDescription: (locationDescription || "").trim() || null,
+        mapId,
+        mapX: hasPin ? mapX : null,
+        mapY: hasPin ? mapY : null,
+        locationSnapshot: snapshot,
+      },
+      req,
+    });
 
     res.json({ success: true });
   }),
@@ -849,6 +968,21 @@ app.post(
       "INSERT INTO claims (item_id, claimant_id) VALUES ($1, $2) ON CONFLICT (item_id, claimant_id) DO UPDATE SET status = 'pending', rejection_reason = NULL, reviewed_by = NULL, reviewed_at = NULL RETURNING claim_id",
       [found.item_id, req.user.id],
     );
+
+    await logCreate(pool, {
+      actor: req.user,
+      entityType: "claims",
+      entityId: claim.rows[0].claim_id,
+      description: `${req.user.name} submitted claim #${claim.rows[0].claim_id} for found item #${found.item_id}`,
+      newValues: {
+        claimId: claim.rows[0].claim_id,
+        itemId: found.item_id,
+        claimantId: req.user.id,
+        status: "pending",
+      },
+      req,
+    });
+
     res.status(201).json({ claimId: claim.rows[0].claim_id });
   }),
 );
@@ -859,6 +993,12 @@ app.patch(
   requireDatabase,
   asyncRoute(async (req, res) => {
     const { isAnonymous, hidePhone } = req.body;
+    const oldRes = await pool.query(
+      "SELECT item_id, is_anonymous, hide_phone FROM items WHERE item_id = $1 AND reporter_id = $2",
+      [req.params.itemId, req.user.id],
+    );
+    const oldItem = oldRes.rows[0];
+
     const result = await pool.query(
       "UPDATE items SET is_anonymous = $1, hide_phone = $2 WHERE item_id = $3 AND reporter_id = $4 RETURNING item_id",
       [
@@ -872,6 +1012,20 @@ app.patch(
       return res
         .status(403)
         .json({ error: "Only the report owner can update privacy settings." });
+
+    await logUpdate(pool, {
+      actor: req.user,
+      entityType: "items",
+      entityId: req.params.itemId,
+      description: `Updated privacy settings for item #${req.params.itemId}`,
+      oldValues: oldItem,
+      newValues: {
+        isAnonymous: Boolean(isAnonymous),
+        hidePhone: hidePhone !== false,
+      },
+      req,
+    });
+
     res.json({ ok: true });
   }),
 );
@@ -926,11 +1080,11 @@ app.post(
     try {
       await client.query("BEGIN");
       const found = await client.query(
-        "SELECT item_id, matched_lost_id FROM items WHERE item_id = $1 AND item_type = 'found' AND matched_lost_id IS NULL FOR UPDATE",
+        "SELECT item_id, title, matched_lost_id FROM items WHERE item_id = $1 AND item_type = 'found' AND matched_lost_id IS NULL FOR UPDATE",
         [req.params.foundId],
       );
       const lost = await client.query(
-        "SELECT item_id, matched_found_id FROM items WHERE item_id = $1 AND item_type = 'lost' AND matched_found_id IS NULL FOR UPDATE",
+        "SELECT item_id, title, matched_found_id FROM items WHERE item_id = $1 AND item_type = 'lost' AND matched_found_id IS NULL FOR UPDATE",
         [lostId],
       );
       if (!found.rows[0] || !lost.rows[0])
@@ -959,6 +1113,31 @@ app.post(
           lostId,
         ],
       );
+
+      await logStatusChange(client, {
+        actor: req.user,
+        action: "MATCH",
+        entityType: "items",
+        entityId: req.params.foundId,
+        oldStatus: "reported",
+        newStatus: "found",
+        description: `Verifier matched found report #${req.params.foundId} ("${found.rows[0].title}") with lost report #${lostId}`,
+        newValues: { matchedLostId: lostId, finderName, foundLocation, verifierNotes: notes },
+        req,
+      });
+
+      await logStatusChange(client, {
+        actor: req.user,
+        action: "MATCH",
+        entityType: "items",
+        entityId: lostId,
+        oldStatus: "reported",
+        newStatus: "found",
+        description: `Lost report #${lostId} ("${lost.rows[0].title}") matched with found report #${req.params.foundId}`,
+        newValues: { matchedFoundId: req.params.foundId },
+        req,
+      });
+
       await client.query("COMMIT");
       res.json({ ok: true, message: "Item found. Please collect it at CSA." });
     } catch (error) {
@@ -984,8 +1163,9 @@ app.patch(
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+      await setAuditContext(client, req.user, req);
       const itemResult = await client.query(
-        "SELECT item_id, item_type, review_lost_id FROM items WHERE item_id = $1 FOR UPDATE",
+        "SELECT item_id, title, status, item_type, review_lost_id FROM items WHERE item_id = $1 FOR UPDATE",
         [req.params.itemId],
       );
       const item = itemResult.rows[0];
@@ -996,7 +1176,7 @@ app.patch(
 
       if (status === "under_review" && lostId) {
         const lostResult = await client.query(
-          "SELECT item_id FROM items WHERE item_id = $1 AND item_type = 'lost' AND status IN ('reported', 'under_review') AND matched_found_id IS NULL FOR UPDATE",
+          "SELECT item_id, title FROM items WHERE item_id = $1 AND item_type = 'lost' AND status IN ('reported', 'under_review') AND matched_found_id IS NULL FOR UPDATE",
           [lostId],
         );
         if (item.item_type !== "found" || !lostResult.rows[0]) {
@@ -1045,6 +1225,17 @@ app.patch(
             .json({ error: "This report cannot be returned to Lost." });
         }
       }
+
+      await logStatusChange(client, {
+        actor: req.user,
+        entityType: "items",
+        entityId: item.item_id,
+        oldStatus: item.status,
+        newStatus: status,
+        description: `Verifier updated item #${item.item_id} ("${item.title}") status to "${status}"`,
+        req,
+      });
+
       await client.query("COMMIT");
       res.json({ ok: true, status });
     } catch (error) {
@@ -1067,20 +1258,60 @@ app.post(
       return res
         .status(400)
         .json({ error: "Decision must be approved or rejected." });
-    const result = await pool.query(
-      "UPDATE claims SET status = $1, reviewed_by = $2, reviewed_at = now(), rejection_reason = $3 WHERE claim_id = $4 AND status = 'pending' RETURNING claim_id",
-      [
-        decision,
-        req.user.id,
-        decision === "rejected" ? reason : null,
-        req.params.claimId,
-      ],
-    );
-    if (!result.rows[0])
-      return res
-        .status(409)
-        .json({ error: "Only pending claims can be decided." });
-    res.json({ ok: true });
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await setAuditContext(client, req.user, req);
+
+      const prevClaimRes = await client.query(
+        "SELECT claim_id, item_id, claimant_id, status FROM claims WHERE claim_id = $1 FOR UPDATE",
+        [req.params.claimId],
+      );
+      const prevClaim = prevClaimRes.rows[0];
+
+      const result = await client.query(
+        "UPDATE claims SET status = $1, reviewed_by = $2, reviewed_at = now(), rejection_reason = $3 WHERE claim_id = $4 AND status = 'pending' RETURNING claim_id",
+        [
+          decision,
+          req.user.id,
+          decision === "rejected" ? reason : null,
+          req.params.claimId,
+        ],
+      );
+      if (!result.rows[0]) {
+        await client.query("ROLLBACK");
+        return res
+          .status(409)
+          .json({ error: "Only pending claims can be decided." });
+      }
+
+      await logStatusChange(client, {
+        actor: req.user,
+        action: decision === "approved" ? "APPROVE" : "REJECT",
+        entityType: "claims",
+        entityId: req.params.claimId,
+        oldStatus: "pending",
+        newStatus: decision,
+        description: `Verifier ${decision} claim #${req.params.claimId}${decision === "rejected" ? ` (Reason: ${reason})` : ""}`,
+        oldValues: prevClaim,
+        newValues: {
+          claimId: req.params.claimId,
+          status: decision,
+          reviewedBy: req.user.id,
+          rejectionReason: decision === "rejected" ? reason : null,
+        },
+        req,
+      });
+
+      await client.query("COMMIT");
+      res.json({ ok: true });
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
   }),
 );
 
@@ -1106,6 +1337,28 @@ app.post(
       "UPDATE items SET status = 'completed', collection_date = now(), collected_by = $1 WHERE item_id = $2 OR matched_lost_id = $2 OR matched_found_id = $2",
       [req.user.id, result.rows[0].item_id],
     );
+
+    await logStatusChange(pool, {
+      actor: req.user,
+      action: "COLLECT",
+      entityType: "claims",
+      entityId: req.params.claimId,
+      oldStatus: "approved",
+      newStatus: "claimed",
+      description: `Verifier processed collection for claim #${req.params.claimId}`,
+      req,
+    });
+
+    await logStatusChange(pool, {
+      actor: req.user,
+      action: "COLLECT",
+      entityType: "items",
+      entityId: result.rows[0].item_id,
+      newStatus: "completed",
+      description: `Item #${result.rows[0].item_id} marked as completed upon collection`,
+      req,
+    });
+
     res.json({ ok: true });
   }),
 );
@@ -1121,18 +1374,44 @@ app.post(
       return res.status(400).json({
         error: "Administrators can create Verifier / CSA accounts only.",
       });
+
+    const client = await pool.connect();
     try {
-      const result = await pool.query(
-        "INSERT INTO users (name, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING user_id, name, email, password_hash, role",
-        [name, email.toLowerCase(), hashPassword(password), role],
+      await client.query("BEGIN");
+      await setAuditContext(client, req.user, req);
+
+      const username = email.split("@")[0].toLowerCase().replace(/[^a-z0-9_]/g, "_");
+      const result = await client.query(
+        "INSERT INTO users (name, email, username, password_hash, role) VALUES ($1, $2, $3, $4, $5) RETURNING user_id, name, email, username, password_hash, role",
+        [name, email.toLowerCase(), username, hashPassword(password), role],
       );
+
+      await logCreate(client, {
+        actor: req.user,
+        entityType: "users",
+        entityId: result.rows[0].user_id,
+        description: `Admin created verifier account "${name}" (${email.toLowerCase()})`,
+        newValues: {
+          userId: result.rows[0].user_id,
+          name,
+          username,
+          email: email.toLowerCase(),
+          role,
+        },
+        req,
+      });
+
+      await client.query("COMMIT");
       res.status(201).json({ user: safeUser(result.rows[0]) });
     } catch (error) {
+      await client.query("ROLLBACK");
       if (error.code === "23505")
         return res
           .status(409)
           .json({ error: "That email already has an account." });
       throw error;
+    } finally {
+      client.release();
     }
   }),
 );
@@ -1160,20 +1439,51 @@ app.delete(
       return res
         .status(400)
         .json({ error: "You cannot remove your own administrator account." });
+
+    const client = await pool.connect();
     try {
-      const result = await pool.query(
+      await client.query("BEGIN");
+      await setAuditContext(client, req.user, req);
+
+      const targetRes = await client.query(
+        "SELECT user_id, name, email, role, username FROM users WHERE user_id = $1 FOR UPDATE",
+        [req.params.userId],
+      );
+      const targetUser = targetRes.rows[0];
+      if (!targetUser) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "Verifier account not found." });
+      }
+
+      const result = await client.query(
         "DELETE FROM users WHERE user_id = $1 AND role = 'staff' RETURNING user_id",
         [req.params.userId],
       );
-      if (!result.rows[0])
+      if (!result.rows[0]) {
+        await client.query("ROLLBACK");
         return res.status(404).json({ error: "Verifier account not found." });
+      }
+
+      await logDelete(client, {
+        actor: req.user,
+        entityType: "users",
+        entityId: req.params.userId,
+        description: `Admin deleted verifier account "${targetUser.name || targetUser.email || req.params.userId}"`,
+        oldValues: targetUser,
+        req,
+      });
+
+      await client.query("COMMIT");
       res.status(204).end();
     } catch (error) {
+      await client.query("ROLLBACK");
       if (error.code === "23503")
         return res.status(409).json({
           error: "This verifier has related records and cannot be removed.",
         });
       throw error;
+    } finally {
+      client.release();
     }
   }),
 );
@@ -1200,8 +1510,9 @@ app.delete(
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+      await setAuditContext(client, req.user, req);
       const caseResult = await client.query(
-        "SELECT item_id, matched_lost_id, matched_found_id FROM items WHERE item_id = $1 FOR UPDATE",
+        "SELECT item_id, title, matched_lost_id, matched_found_id, status FROM items WHERE item_id = $1 FOR UPDATE",
         [req.params.itemId],
       );
       if (!caseResult.rows[0]) {
@@ -1223,6 +1534,16 @@ app.delete(
       await client.query("DELETE FROM items WHERE item_id = ANY($1)", [
         caseIds,
       ]);
+
+      await logDelete(client, {
+        actor: req.user,
+        entityType: "items",
+        entityId: req.params.itemId,
+        description: `Admin permanently removed report case #${req.params.itemId} ("${caseResult.rows[0].title}")`,
+        oldValues: caseResult.rows[0],
+        req,
+      });
+
       await client.query("COMMIT");
       res.status(204).end();
     } catch (error) {
@@ -1246,3 +1567,5 @@ app.get("*", (req, res) =>
 app.listen(port, () =>
   console.log(`Campus Lost & Found running at http://localhost:${port}`),
 );
+
+export { app, pool };

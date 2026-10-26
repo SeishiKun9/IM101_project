@@ -229,6 +229,12 @@ async function migrate() {
     await client.query(sql004);
     console.log("Applied migration 004 successfully.");
 
+    console.log("Running migration 005_audit_logs...");
+    const sql005Path = path.join(__dirname, "005_audit_logs.sql");
+    const sql005 = fs.readFileSync(sql005Path, "utf8");
+    await client.query(sql005);
+    console.log("Applied migration 005 successfully.");
+
     await client.query("COMMIT");
     console.log("Migration completed successfully!");
   } catch (err) {

@@ -1,5 +1,5 @@
 import express from "express";
-import { logAdminAudit } from "../services/audit.js";
+import { logAdminAudit, getAuditLogs } from "../services/audit.js";
 
 export function createAdminLocationsRouter({
   pool,
@@ -1127,28 +1127,38 @@ export function createAdminLocationsRouter({
   router.get(
     paths("/audit-logs"),
     asyncRoute(async (req, res) => {
-      const { table, limit = 50 } = req.query;
-      const values = [];
-      let whereClause = "";
-      if (table) {
-        values.push(table);
-        whereClause = `WHERE a.table_name = $${values.length}`;
-      }
-      values.push(Math.min(200, Math.max(1, Number(limit) || 50)));
+      if (req.query.format === "array") {
+        const { table, limit = 50 } = req.query;
+        const values = [];
+        let whereClause = "";
+        if (table) {
+          values.push(table);
+          whereClause = `WHERE a.entity_type = $${values.length} OR a.table_name = $${values.length}`;
+        }
+        values.push(Math.min(200, Math.max(1, Number(limit) || 50)));
 
-      const result = await pool.query(
-        `SELECT a.audit_id AS id, a.action, a.table_name AS "tableName",
-                a.record_id AS "recordId", a.old_data AS "oldData",
-                a.new_data AS "newData", a.action_time AS "actionTime",
-                u.name AS "userName", u.email AS "userEmail"
-         FROM audit_logs a
-         LEFT JOIN users u ON u.user_id = a.user_id
-         ${whereClause}
-         ORDER BY a.action_time DESC
-         LIMIT $${values.length}`,
-        values,
-      );
-      res.json(result.rows);
+        const result = await pool.query(
+          `SELECT a.id, a.action, a.status,
+                  COALESCE(a.entity_type, a.table_name) AS "tableName",
+                  COALESCE(a.entity_type, a.table_name) AS "entityType",
+                  COALESCE(a.entity_id, a.record_id::text) AS "recordId",
+                  COALESCE(a.old_values, a.old_data) AS "oldData",
+                  COALESCE(a.new_values, a.new_data) AS "newData",
+                  COALESCE(a.created_at, a.action_time) AS "actionTime",
+                  a.actor_username AS "userName",
+                  a.actor_role AS "actorRole",
+                  a.description
+           FROM audit_logs a
+           ${whereClause}
+           ORDER BY a.created_at DESC
+           LIMIT $${values.length}`,
+          values,
+        );
+        return res.json(result.rows);
+      }
+
+      const result = await getAuditLogs(pool, req.query);
+      res.json(result);
     }),
   );
 

@@ -2,7 +2,7 @@ import express from "express";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { logAdminAudit } from "../services/audit.js";
+import { logAdminAudit, setAuditContext } from "../services/audit.js";
 import { validateAndSaveImage } from "../services/image.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -75,6 +75,7 @@ export function createAdminMapsRouter({
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
+        await setAuditContext(client, req.user, req);
 
         const verRes = await client.query(
           "SELECT COALESCE(MAX(version_number), 0) + 1 AS \"nextVersion\" FROM campus_maps",
@@ -115,6 +116,7 @@ export function createAdminMapsRouter({
           newMap.id,
           null,
           newMap,
+          req,
         );
 
         await client.query("COMMIT");
@@ -148,6 +150,7 @@ export function createAdminMapsRouter({
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
+        await setAuditContext(client, req.user, req);
 
         const targetRes = await client.query(
           "SELECT * FROM campus_maps WHERE map_id = $1",
@@ -197,6 +200,7 @@ export function createAdminMapsRouter({
           mapId,
           oldRow,
           updatedMap,
+          req,
         );
 
         await client.query("COMMIT");
@@ -218,6 +222,7 @@ export function createAdminMapsRouter({
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
+        await setAuditContext(client, req.user, req);
 
         const targetRes = await client.query(
           "SELECT * FROM campus_maps WHERE map_id = $1",
@@ -250,6 +255,7 @@ export function createAdminMapsRouter({
           mapId,
           oldRow,
           updatedMap,
+          req,
         );
 
         await client.query("COMMIT");
@@ -271,6 +277,7 @@ export function createAdminMapsRouter({
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
+        await setAuditContext(client, req.user, req);
 
         const targetRes = await client.query(
           "SELECT * FROM campus_maps WHERE map_id = $1",
@@ -299,6 +306,7 @@ export function createAdminMapsRouter({
           mapId,
           oldRow,
           updatedMap,
+          req,
         );
 
         await client.query("COMMIT");
@@ -348,6 +356,7 @@ export function createAdminMapsRouter({
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
+        await setAuditContext(client, req.user, req);
 
         await client.query("DELETE FROM campus_maps WHERE map_id = $1", [
           mapId,
@@ -361,6 +370,7 @@ export function createAdminMapsRouter({
           mapId,
           targetMap,
           null,
+          req,
         );
 
         await client.query("COMMIT");
