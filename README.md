@@ -27,3 +27,8 @@ Public registration creates Client accounts. Administrator registration is accep
 Use feature branches such as `feature/schema-v1`, `feature/audit-procedures`, and `feature/api-crud`. Protect `main`, require pull requests, and use descriptive commits such as `feat: add claim approval procedure`.
 
 # IM101_project
+
+
+# SCHEMA TABLE/ERD 
+
+https://lucid.app/lucidchart/0a65835b-ce3b-4d50-bcba-0471b3c21ef5/edit?viewport_loc=845%2C-228%2C3316%2C1342%2C0_0&invitationId=inv_a4697eb1-ce8d-49f8-b011-3aa9e71693d1
