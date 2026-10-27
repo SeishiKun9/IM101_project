@@ -4,6 +4,8 @@
 // snapshot sanitation, automatic diffing, and query services.
 // ==============================================================================
 
+import crypto from "crypto";
+
 const SENSITIVE_KEYS = new Set([
   "password",
   "password_hash",
@@ -743,3 +745,398 @@ export async function getAuditOverview(pool, { startDate = "", endDate = "" } = 
     recentActivity: recentRes.rows,
   };
 }
+
+function internalHashPassword(password) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = crypto.scryptSync(password, salt, 64).toString("hex");
+  return `scrypt:${salt}:${hash}`;
+}
+
+/**
+ * Recover a previously deleted entity from its audit log snapshot.
+ */
+export async function recoverDeletedAuditRecord(pool, logId, actorUser, req) {
+  const log = await getAuditLogById(pool, logId);
+  if (!log) {
+    const err = new Error("Audit log record not found.");
+    err.statusCode = 404;
+    throw err;
+  }
+
+  const actionUpper = String(log.action || "").toUpperCase();
+  if (actionUpper !== "DELETE" && actionUpper !== "REMOVE") {
+    const err = new Error("Only deleted audit records can be recovered.");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const snapshot = log.oldValues;
+  if (!snapshot || typeof snapshot !== "object" || Object.keys(snapshot).length === 0) {
+    const err = new Error("No historical snapshot data found to recover this record.");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await setAuditContext(client, actorUser, req);
+
+    const entityType = String(log.entityType || "").toLowerCase();
+    let recoveredRecord = null;
+    let detailsMessage = "";
+
+    if (entityType === "users") {
+      if (snapshot.email) {
+        const emailCheck = await client.query(
+          "SELECT user_id, email FROM users WHERE LOWER(email) = LOWER($1)",
+          [snapshot.email],
+        );
+        if (emailCheck.rows.length > 0) {
+          const err = new Error(
+            `Cannot recover user: an account with email "${snapshot.email}" already exists (User #${emailCheck.rows[0].user_id}).`,
+          );
+          err.statusCode = 409;
+          throw err;
+        }
+      }
+
+      if (log.entityId && !isNaN(Number(log.entityId))) {
+        const idCheck = await client.query(
+          "SELECT user_id FROM users WHERE user_id = $1",
+          [Number(log.entityId)],
+        );
+        if (idCheck.rows.length > 0) {
+          const err = new Error(`Cannot recover user: user account #${log.entityId} already exists.`);
+          err.statusCode = 409;
+          throw err;
+        }
+      }
+
+      const defaultPassword = "Recovered2026!";
+      const passHash =
+        snapshot.password_hash ||
+        snapshot.passwordHash ||
+        internalHashPassword(defaultPassword);
+      const role = snapshot.role || "student";
+      const name = snapshot.name || snapshot.username || `User ${log.entityId}`;
+      const email = snapshot.email || `recovered_${log.entityId}@campus.edu`;
+      const username = snapshot.username || email.split("@")[0];
+
+      let insertRes;
+      if (log.entityId && !isNaN(Number(log.entityId))) {
+        insertRes = await client.query(
+          `INSERT INTO users (user_id, name, email, password_hash, role, username, is_active)
+           VALUES ($1, $2, $3, $4, $5, $6, true)
+           RETURNING user_id AS id, name, email, role, username, is_active AS "isActive"`,
+          [Number(log.entityId), name, email, passHash, role, username],
+        );
+        await client.query(
+          "SELECT setval('users_user_id_seq', (SELECT GREATEST(MAX(user_id), 1) FROM users))",
+        );
+      } else {
+        insertRes = await client.query(
+          `INSERT INTO users (name, email, password_hash, role, username, is_active)
+           VALUES ($1, $2, $3, $4, $5, true)
+           RETURNING user_id AS id, name, email, role, username, is_active AS "isActive"`,
+          [name, email, passHash, role, username],
+        );
+      }
+      recoveredRecord = insertRes.rows[0];
+      detailsMessage = `User account "${recoveredRecord.name}" (${recoveredRecord.email}) has been recovered.`;
+    } else if (entityType === "items") {
+      if (log.entityId && !isNaN(Number(log.entityId))) {
+        const idCheck = await client.query("SELECT item_id FROM items WHERE item_id = $1", [
+          Number(log.entityId),
+        ]);
+        if (idCheck.rows.length > 0) {
+          const err = new Error(`Cannot recover report: report #${log.entityId} already exists.`);
+          err.statusCode = 409;
+          throw err;
+        }
+      }
+
+      const title = snapshot.title || `Recovered Item #${log.entityId}`;
+      const itemType = snapshot.item_type || snapshot.itemType || snapshot.type || "lost";
+      const description =
+        snapshot.description || snapshot.title || "Recovered report from audit log snapshot";
+      const status = snapshot.status || "reported";
+      const reporterName = snapshot.reporter_name || snapshot.reporterName || "Campus Member";
+      const dateReported =
+        snapshot.date_reported || snapshot.dateReported || new Date().toISOString().split("T")[0];
+
+      let reporterId =
+        snapshot.reporter_id ||
+        snapshot.reporterId ||
+        actorUser?.id ||
+        (actorUser?.userId ? Number(actorUser.userId) : null);
+      if (!reporterId) {
+        const u = await client.query("SELECT user_id FROM users LIMIT 1");
+        reporterId = u.rows[0]?.user_id || 1;
+      } else {
+        const uCheck = await client.query("SELECT user_id FROM users WHERE user_id = $1", [reporterId]);
+        if (uCheck.rows.length === 0) {
+          const uFallback = await client.query("SELECT user_id FROM users LIMIT 1");
+          reporterId = uFallback.rows[0]?.user_id || reporterId;
+        }
+      }
+
+      let categoryId = snapshot.category_id || snapshot.categoryId;
+      if (!categoryId) {
+        const catRes = await client.query("SELECT category_id FROM categories LIMIT 1");
+        categoryId = catRes.rows[0]?.category_id || 1;
+      } else {
+        const catCheck = await client.query("SELECT category_id FROM categories WHERE category_id = $1", [categoryId]);
+        if (catCheck.rows.length === 0) {
+          const catFallback = await client.query("SELECT category_id FROM categories LIMIT 1");
+          categoryId = catFallback.rows[0]?.category_id || categoryId;
+        }
+      }
+
+      let insertRes;
+      if (log.entityId && !isNaN(Number(log.entityId))) {
+        insertRes = await client.query(
+          `INSERT INTO items (item_id, title, item_type, description, status, reporter_name, date_reported, reporter_id, category_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           RETURNING item_id AS id, title, item_type AS "itemType", status`,
+          [Number(log.entityId), title, itemType, description, status, reporterName, dateReported, reporterId, categoryId],
+        );
+        await client.query(
+          "SELECT setval('items_item_id_seq', (SELECT GREATEST(MAX(item_id), 1) FROM items))",
+        );
+      } else {
+        insertRes = await client.query(
+          `INSERT INTO items (title, item_type, description, status, reporter_name, date_reported, reporter_id, category_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           RETURNING item_id AS id, title, item_type AS "itemType", status`,
+          [title, itemType, description, status, reporterName, dateReported, reporterId, categoryId],
+        );
+      }
+      recoveredRecord = insertRes.rows[0];
+      detailsMessage = `Report case #${recoveredRecord.id} ("${recoveredRecord.title}") has been recovered.`;
+    } else if (entityType === "campus_maps") {
+      if (log.entityId && !isNaN(Number(log.entityId))) {
+        const idCheck = await client.query("SELECT map_id FROM campus_maps WHERE map_id = $1", [
+          Number(log.entityId),
+        ]);
+        if (idCheck.rows.length > 0) {
+          const err = new Error(`Cannot recover map: campus map #${log.entityId} already exists.`);
+          err.statusCode = 409;
+          throw err;
+        }
+      }
+
+      const title = snapshot.title || `Recovered Map Version #${log.entityId}`;
+      const imageUrl = snapshot.image_url || snapshot.imageUrl || "";
+      const svgOverlay = snapshot.svg_overlay || snapshot.svgOverlay || null;
+
+      let insertRes;
+      if (log.entityId && !isNaN(Number(log.entityId))) {
+        insertRes = await client.query(
+          `INSERT INTO campus_maps (map_id, title, image_url, svg_overlay, is_active, is_archived)
+           VALUES ($1, $2, $3, $4, false, false)
+           RETURNING map_id AS id, title, is_active AS "isActive"`,
+          [Number(log.entityId), title, imageUrl, svgOverlay],
+        );
+        await client.query(
+          "SELECT setval('campus_maps_map_id_seq', (SELECT GREATEST(MAX(map_id), 1) FROM campus_maps))",
+        );
+      } else {
+        insertRes = await client.query(
+          `INSERT INTO campus_maps (title, image_url, svg_overlay, is_active, is_archived)
+           VALUES ($1, $2, $3, false, false)
+           RETURNING map_id AS id, title, is_active AS "isActive"`,
+          [title, imageUrl, svgOverlay],
+        );
+      }
+      recoveredRecord = insertRes.rows[0];
+      detailsMessage = `Campus map version #${recoveredRecord.id} ("${recoveredRecord.title}") recovered in inactive state.`;
+    } else if (entityType === "buildings") {
+      if (log.entityId && !isNaN(Number(log.entityId))) {
+        const idCheck = await client.query(
+          "SELECT building_id FROM buildings WHERE building_id = $1",
+          [Number(log.entityId)],
+        );
+        if (idCheck.rows.length > 0) {
+          const err = new Error(`Cannot recover building: building #${log.entityId} already exists.`);
+          err.statusCode = 409;
+          throw err;
+        }
+      }
+      const name = snapshot.name || snapshot.building_name || `Recovered Building #${log.entityId}`;
+      const code =
+        snapshot.code || snapshot.building_code || `B${log.entityId || Date.now().toString().slice(-4)}`;
+
+      let insertRes;
+      if (log.entityId && !isNaN(Number(log.entityId))) {
+        insertRes = await client.query(
+          `INSERT INTO buildings (building_id, name, code, is_archived)
+           VALUES ($1, $2, $3, false)
+           RETURNING building_id AS id, name, code`,
+          [Number(log.entityId), name, code],
+        );
+        await client.query(
+          "SELECT setval('buildings_building_id_seq', (SELECT GREATEST(MAX(building_id), 1) FROM buildings))",
+        );
+      } else {
+        insertRes = await client.query(
+          `INSERT INTO buildings (name, code, is_archived)
+           VALUES ($1, $2, false)
+           RETURNING building_id AS id, name, code`,
+          [name, code],
+        );
+      }
+      recoveredRecord = insertRes.rows[0];
+      detailsMessage = `Building "${recoveredRecord.name}" (${recoveredRecord.code}) recovered successfully.`;
+    } else if (entityType === "floors") {
+      const buildingId = snapshot.building_id || snapshot.buildingId;
+      if (!buildingId) {
+        const err = new Error("Cannot recover floor without parent building reference.");
+        err.statusCode = 400;
+        throw err;
+      }
+      const bCheck = await client.query(
+        "SELECT building_id FROM buildings WHERE building_id = $1",
+        [buildingId],
+      );
+      if (bCheck.rows.length === 0) {
+        const err = new Error(
+          `Cannot recover floor: parent building #${buildingId} does not exist. Please recover or create the building first.`,
+        );
+        err.statusCode = 409;
+        throw err;
+      }
+      const floorNumber = snapshot.floor_number ?? snapshot.floorNumber ?? 1;
+      const floorName = snapshot.floor_name || snapshot.name || `Floor ${floorNumber}`;
+
+      let insertRes;
+      if (log.entityId && !isNaN(Number(log.entityId))) {
+        insertRes = await client.query(
+          `INSERT INTO floors (floor_id, building_id, floor_number, floor_name, is_archived)
+           VALUES ($1, $2, $3, $4, false)
+           RETURNING floor_id AS id, building_id, floor_number, floor_name`,
+          [Number(log.entityId), buildingId, floorNumber, floorName],
+        );
+        await client.query(
+          "SELECT setval('floors_floor_id_seq', (SELECT GREATEST(MAX(floor_id), 1) FROM floors))",
+        );
+      } else {
+        insertRes = await client.query(
+          `INSERT INTO floors (building_id, floor_number, floor_name, is_archived)
+           VALUES ($1, $2, $3, false)
+           RETURNING floor_id AS id, building_id, floor_number, floor_name`,
+          [buildingId, floorNumber, floorName],
+        );
+      }
+      recoveredRecord = insertRes.rows[0];
+      detailsMessage = `Floor "${recoveredRecord.floor_name}" (Building #${buildingId}) recovered successfully.`;
+    } else if (entityType === "rooms") {
+      const floorId = snapshot.floor_id || snapshot.floorId;
+      if (!floorId) {
+        const err = new Error("Cannot recover room without parent floor reference.");
+        err.statusCode = 400;
+        throw err;
+      }
+      const fCheck = await client.query("SELECT floor_id FROM floors WHERE floor_id = $1", [
+        floorId,
+      ]);
+      if (fCheck.rows.length === 0) {
+        const err = new Error(
+          `Cannot recover room: parent floor #${floorId} does not exist. Please recover or create the floor first.`,
+        );
+        err.statusCode = 409;
+        throw err;
+      }
+      const roomNumber = snapshot.room_number || snapshot.roomNumber || `R-${log.entityId}`;
+      const roomName = snapshot.room_name || snapshot.name || `Room ${roomNumber}`;
+
+      let insertRes;
+      if (log.entityId && !isNaN(Number(log.entityId))) {
+        insertRes = await client.query(
+          `INSERT INTO rooms (room_id, floor_id, room_number, room_name, is_archived)
+           VALUES ($1, $2, $3, $4, false)
+           RETURNING room_id AS id, floor_id, room_number, room_name`,
+          [Number(log.entityId), floorId, roomNumber, roomName],
+        );
+        await client.query(
+          "SELECT setval('rooms_room_id_seq', (SELECT GREATEST(MAX(room_id), 1) FROM rooms))",
+        );
+      } else {
+        insertRes = await client.query(
+          `INSERT INTO rooms (floor_id, room_number, room_name, is_archived)
+           VALUES ($1, $2, $3, false)
+           RETURNING room_id AS id, floor_id, room_number, room_name`,
+          [floorId, roomNumber, roomName],
+        );
+      }
+      recoveredRecord = insertRes.rows[0];
+      detailsMessage = `Room "${recoveredRecord.room_name}" (#${recoveredRecord.room_number}) recovered successfully.`;
+    } else {
+      // Dynamic fallback for any other table by inspecting information_schema
+      const colsRes = await client.query(
+        `SELECT column_name, data_type, is_nullable
+         FROM information_schema.columns
+         WHERE table_name = $1 AND table_schema = 'public'`,
+        [entityType],
+      );
+      if (colsRes.rows.length === 0) {
+        const err = new Error(`Cannot automatically recover entity of unknown type "${entityType}".`);
+        err.statusCode = 400;
+        throw err;
+      }
+      const validCols = new Set(colsRes.rows.map((r) => r.column_name.toLowerCase()));
+      const insertCols = [];
+      const insertVals = [];
+      const params = [];
+      let pIdx = 1;
+
+      for (const [key, val] of Object.entries(snapshot)) {
+        const colName = key.toLowerCase();
+        if (validCols.has(colName) && val !== undefined) {
+          insertCols.push(colName);
+          insertVals.push(`$${pIdx++}`);
+          params.push(val);
+        }
+      }
+
+      if (insertCols.length === 0) {
+        const err = new Error(`No matching valid database columns found in snapshot for "${entityType}".`);
+        err.statusCode = 400;
+        throw err;
+      }
+
+      const q = `INSERT INTO ${entityType} (${insertCols.join(", ")}) VALUES (${insertVals.join(", ")}) RETURNING *`;
+      const dynRes = await client.query(q, params);
+      recoveredRecord = dynRes.rows[0];
+      detailsMessage = `Record in "${entityType}" recovered successfully.`;
+    }
+
+    // Log the RESTORE action in the audit trail
+    await logAudit(client, {
+      actor: actorUser,
+      action: "RESTORE",
+      status: "SUCCESS",
+      entityType: log.entityType,
+      entityId: log.entityId || (recoveredRecord ? Object.values(recoveredRecord)[0] : null),
+      description: `Admin recovered deleted ${log.entityType} #${log.entityId || ""} from audit record #${log.id}`,
+      newValues: recoveredRecord,
+      oldValues: null,
+      req,
+    });
+
+    await client.query("COMMIT");
+    return {
+      success: true,
+      message: detailsMessage || "Record recovered successfully.",
+      recoveredRecord,
+      entityType: log.entityType,
+      entityId: log.entityId,
+    };
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+

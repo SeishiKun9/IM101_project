@@ -8,6 +8,7 @@ import {
   getAuditLogs,
   getAuditOverview,
   getAuditLogById,
+  recoverDeletedAuditRecord,
 } from "../services/audit.js";
 
 export function createAdminAuditRouter({
@@ -53,5 +54,25 @@ export function createAdminAuditRouter({
     }),
   );
 
+  // 4. POST /api/admin/audit-logs/:id/recover (recover deleted record from snapshot)
+  router.post(
+    "/:id/recover",
+    asyncRoute(async (req, res) => {
+      try {
+        const result = await recoverDeletedAuditRecord(
+          pool,
+          req.params.id,
+          req.user,
+          req,
+        );
+        res.json(result);
+      } catch (err) {
+        const status = err.statusCode || (err.message.includes("exists") ? 409 : 400);
+        res.status(status).json({ error: err.message });
+      }
+    }),
+  );
+
   return router;
 }
+

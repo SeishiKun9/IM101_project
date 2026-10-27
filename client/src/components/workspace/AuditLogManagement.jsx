@@ -25,6 +25,8 @@ export default function AuditLogManagement() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [sortOrder, setSortOrder] = useState("DESC");
+  const [recoveringId, setRecoveringId] = useState(null);
+  const [notice, setNotice] = useState("");
 
   const fetchOverview = useCallback(async () => {
     try {
@@ -95,13 +97,43 @@ export default function AuditLogManagement() {
     setSortOrder("DESC");
   }
 
+  async function handleRecover(log) {
+    if (!log) return;
+    const entity = log.entity_type || log.entityType || "record";
+    const id = log.entity_id || log.entityId || "";
+    const confirmed = window.confirm(
+      `Are you sure you want to recover deleted ${entity}${id ? ` #${id}` : ""}? This will restore the record back into the database from its audit snapshot.`
+    );
+    if (!confirmed) return;
+
+    setRecoveringId(log.id);
+    setError("");
+    setNotice("");
+    try {
+      const res = await apiRequest(`/admin/audit-logs/${log.id}/recover`, {
+        method: "POST",
+      });
+      setNotice(res.message || "Record successfully recovered!");
+      await fetchOverview();
+      await fetchLogs(pagination.page);
+    } catch (err) {
+      setError(err.message || "Failed to recover deleted record.");
+    } finally {
+      setRecoveringId(null);
+    }
+  }
+
   function getActionBadgeClass(act) {
     switch (act?.toUpperCase()) {
       case "CREATE":
+      case "RESTORE":
         return "audit-badge-create";
       case "UPDATE":
+      case "REACTIVATE":
+      case "DEACTIVATE":
         return "audit-badge-update";
       case "DELETE":
+      case "REMOVE":
         return "audit-badge-delete";
       case "APPROVE":
         return "audit-badge-approve";
@@ -431,6 +463,13 @@ export default function AuditLogManagement() {
         </div>
       </form>
 
+      {/* Status Notice */}
+      {notice && (
+        <div className="alert-banner alert-success">
+          <strong>Notice:</strong> {notice}
+        </div>
+      )}
+
       {/* Error Notice */}
       {error && (
         <div className="alert-banner alert-danger">
@@ -547,17 +586,50 @@ export default function AuditLogManagement() {
                       </td>
 
                       <td className="text-right audit-cell-tools">
-                        <button
-                          className="btn btn-secondary btn-sm audit-inspect-btn"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedLog(log);
+                        <div
+                          style={{
+                            display: "inline-flex",
+                            gap: "6px",
+                            alignItems: "center",
+                            justifyContent: "flex-end",
                           }}
-                          type="button"
-                          title="Inspect JSON snapshots and changes"
                         >
-                          🔍 Inspect
-                        </button>
+                          <button
+                            className="btn btn-secondary btn-sm audit-inspect-btn"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedLog(log);
+                            }}
+                            type="button"
+                            title="Inspect JSON snapshots and changes"
+                          >
+                            🔍 Inspect
+                          </button>
+                          {(action === "DELETE" || action === "REMOVE") && (
+                            <button
+                              className="btn btn-sm audit-recover-btn"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleRecover(log);
+                              }}
+                              disabled={recoveringId === log.id}
+                              type="button"
+                              title="Recover this deleted record into the active database"
+                              style={{
+                                background: "#d97706",
+                                borderColor: "#b45309",
+                                color: "#ffffff",
+                                fontWeight: 600,
+                                fontSize: "12px",
+                                padding: "5px 10px",
+                                borderRadius: "4px",
+                                cursor: recoveringId === log.id ? "not-allowed" : "pointer",
+                              }}
+                            >
+                              {recoveringId === log.id ? "↺..." : "↺ Recover"}
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -624,6 +696,12 @@ export default function AuditLogManagement() {
           logs={logs}
           onSelectLog={setSelectedLog}
           onClose={() => setSelectedLog(null)}
+          onRecover={async () => {
+            setSelectedLog(null);
+            setNotice("Record successfully recovered from audit snapshot.");
+            await fetchOverview();
+            await fetchLogs(pagination.page);
+          }}
         />
       )}
     </section>

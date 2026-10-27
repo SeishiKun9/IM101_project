@@ -13,6 +13,7 @@ import { createProfileRouter } from "./routes/profile.js";
 import { createAdminAuditRouter } from "./routes/adminAudit.js";
 import { createCampusLogoRouter } from "./routes/campusLogo.js";
 import {
+  logAudit,
   logCreate,
   logUpdate,
   logDelete,
@@ -120,6 +121,7 @@ function safeUser(row) {
     name: row.name,
     email: row.email,
     role: row.role,
+    isActive: row.is_active !== false,
     contactNumber: row.contact_number || null,
     defaultAnonymous: Boolean(row.default_anonymous),
     defaultHidePhone: row.default_hide_phone !== false,
@@ -150,7 +152,7 @@ async function startSession(user) {
 async function findUser(emailOrUsername) {
   const clean = String(emailOrUsername || "").trim();
   const result = await pool.query(
-    `SELECT user_id, username, name, email, password_hash, role,
+    `SELECT user_id, username, name, email, password_hash, role, is_active,
             contact_number, default_anonymous, default_hide_phone,
             theme_preference, created_at, updated_at
      FROM users
@@ -161,7 +163,7 @@ async function findUser(emailOrUsername) {
 }
 async function findUserById(userId) {
   const result = await pool.query(
-    `SELECT user_id, username, name, email, password_hash, role,
+    `SELECT user_id, username, name, email, password_hash, role, is_active,
             contact_number, default_anonymous, default_hide_phone,
             theme_preference, created_at, updated_at
      FROM users
@@ -323,6 +325,21 @@ app.post(
         .status(401)
         .json({ error: "Email or password does not match." });
     }
+
+    if (user.is_active === false) {
+      await logFailure(pool, {
+        actor: { username: emailOrUsername || "anonymous" },
+        action: "LOGIN",
+        entityType: "auth",
+        description: `Login blocked for deactivated account "${emailOrUsername}"`,
+        error: "This account has been deactivated. Please contact an administrator.",
+        req,
+      });
+      return res
+        .status(403)
+        .json({ error: "This account has been deactivated. Please contact an administrator." });
+    }
+
     const session = await startSession(user);
     await logAuthEvent(pool, {
       actor: session.user,
@@ -1369,11 +1386,31 @@ app.post(
   requireDatabase,
   requireRole("admin"),
   asyncRoute(async (req, res) => {
-    const { name, email, password, role } = req.body;
-    if (!name || !email || !password || role !== "staff")
+    const { name, email, password, role, setupToken = "" } = req.body;
+    if (!name || !email || !password || (role !== "staff" && role !== "admin"))
       return res.status(400).json({
-        error: "Administrators can create Verifier / CSA accounts only.",
+        error: "Administrators can provision Verifier or Administrator accounts only.",
       });
+
+    if (
+      role === "admin" &&
+      (!adminSetupToken || setupToken !== adminSetupToken)
+    ) {
+      return res.status(403).json({
+        error: "Administrator registration requires a valid setup authorization.",
+      });
+    }
+
+    const normalizedEmail = String(email).trim().toLowerCase();
+    if (
+      role === "admin" &&
+      !normalizedEmail.endsWith(".edu") &&
+      !normalizedEmail.endsWith(".edu.ph")
+    ) {
+      return res.status(400).json({
+        error: "Please use your school email address (.edu or .edu.ph).",
+      });
+    }
 
     const client = await pool.connect();
     try {
@@ -1386,11 +1423,12 @@ app.post(
         [name, email.toLowerCase(), username, hashPassword(password), role],
       );
 
+      const roleLabel = role === "admin" ? "administrator" : "verifier";
       await logCreate(client, {
         actor: req.user,
         entityType: "users",
         entityId: result.rows[0].user_id,
-        description: `Admin created verifier account "${name}" (${email.toLowerCase()})`,
+        description: `Admin created ${roleLabel} account "${name}" (${email.toLowerCase()})`,
         newValues: {
           userId: result.rows[0].user_id,
           name,
@@ -1423,9 +1461,177 @@ app.get(
   requireRole("admin"),
   asyncRoute(async (req, res) => {
     const result = await pool.query(
-      "SELECT user_id AS id, name, email, role, created_at AS \"createdAt\" FROM users WHERE role IN ('staff', 'admin') ORDER BY created_at DESC",
+      "SELECT user_id AS id, name, email, role, is_active AS \"isActive\", created_at AS \"createdAt\" FROM users ORDER BY created_at DESC",
     );
     res.json(result.rows);
+  }),
+);
+
+app.patch(
+  "/api/admin/users/:userId/status",
+  requireAuth,
+  requireDatabase,
+  requireRole("admin"),
+  asyncRoute(async (req, res) => {
+    const { isActive } = req.body;
+    if (typeof isActive !== "boolean") {
+      return res.status(400).json({ error: "isActive must be a boolean." });
+    }
+    if (!isActive && Number(req.params.userId) === Number(req.user.id)) {
+      return res
+        .status(400)
+        .json({ error: "You cannot deactivate your own administrator account." });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await setAuditContext(client, req.user, req);
+
+      const targetRes = await client.query(
+        "SELECT user_id, name, email, role, is_active FROM users WHERE user_id = $1 FOR UPDATE",
+        [req.params.userId],
+      );
+      const targetUser = targetRes.rows[0];
+      if (!targetUser) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "User account not found." });
+      }
+
+      const updatedRes = await client.query(
+        "UPDATE users SET is_active = $1, updated_at = now() WHERE user_id = $2 RETURNING user_id AS id, name, email, role, is_active AS \"isActive\"",
+        [isActive, req.params.userId],
+      );
+
+      if (!isActive) {
+        invalidateSessionsForUser(req.params.userId);
+      }
+
+      const actionLabel = isActive ? "REACTIVATE" : "DEACTIVATE";
+      const roleLabel =
+        targetUser.role === "staff"
+          ? "verifier"
+          : targetUser.role === "admin"
+          ? "administrator"
+          : "user";
+
+      await logAudit(client, {
+        actor: req.user,
+        action: actionLabel,
+        status: "SUCCESS",
+        entityType: "users",
+        entityId: req.params.userId,
+        description: `Admin ${actionLabel.toLowerCase()}d ${roleLabel} account "${targetUser.name}" (${targetUser.email})`,
+        oldValues: { isActive: targetUser.is_active },
+        newValues: { isActive },
+        req,
+      });
+
+      await client.query("COMMIT");
+      res.json(updatedRes.rows[0]);
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  }),
+);
+
+app.put(
+  "/api/admin/users/:userId",
+  requireAuth,
+  requireDatabase,
+  requireRole("admin"),
+  asyncRoute(async (req, res) => {
+    const { name, email, isActive } = req.body;
+    if (!name || !email) {
+      return res.status(400).json({ error: "Name and email are required." });
+    }
+
+    const normalizedEmail = String(email).trim().toLowerCase();
+    if (
+      !normalizedEmail.endsWith(".edu") &&
+      !normalizedEmail.endsWith(".edu.ph")
+    ) {
+      return res
+        .status(400)
+        .json({ error: "Please use a valid campus institutional email address (.edu or .edu.ph)." });
+    }
+
+    if (isActive === false && Number(req.params.userId) === Number(req.user.id)) {
+      return res
+        .status(400)
+        .json({ error: "You cannot deactivate your own administrator account." });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await setAuditContext(client, req.user, req);
+
+      const targetRes = await client.query(
+        "SELECT user_id, name, email, role, is_active FROM users WHERE user_id = $1 FOR UPDATE",
+        [req.params.userId],
+      );
+      const targetUser = targetRes.rows[0];
+      if (!targetUser) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "User account not found." });
+      }
+
+      const targetActive = typeof isActive === "boolean" ? isActive : targetUser.is_active;
+
+      const updatedRes = await client.query(
+        `UPDATE users
+         SET name = $1, email = $2, is_active = $3, updated_at = now()
+         WHERE user_id = $4
+         RETURNING user_id AS id, name, email, role, is_active AS "isActive"`,
+        [name.trim(), normalizedEmail, targetActive, req.params.userId],
+      );
+
+      if (!targetActive) {
+        invalidateSessionsForUser(req.params.userId);
+      } else {
+        updateSessionsForUser(req.params.userId, {
+          name: name.trim(),
+          email: normalizedEmail,
+        });
+      }
+
+      await logAudit(client, {
+        actor: req.user,
+        action: "UPDATE",
+        status: "SUCCESS",
+        entityType: "users",
+        entityId: req.params.userId,
+        description: `Admin updated account "${targetUser.name}" (${targetUser.email})`,
+        oldValues: {
+          name: targetUser.name,
+          email: targetUser.email,
+          isActive: targetUser.is_active,
+        },
+        newValues: {
+          name: name.trim(),
+          email: normalizedEmail,
+          isActive: targetActive,
+        },
+        req,
+      });
+
+      await client.query("COMMIT");
+      res.json(updatedRes.rows[0]);
+    } catch (err) {
+      await client.query("ROLLBACK");
+      if (err.code === "23505") {
+        return res
+          .status(409)
+          .json({ error: "An account with that email already exists." });
+      }
+      throw err;
+    } finally {
+      client.release();
+    }
   }),
 );
 
@@ -1435,7 +1641,7 @@ app.delete(
   requireDatabase,
   requireRole("admin"),
   asyncRoute(async (req, res) => {
-    if (Number(req.params.userId) === req.user.id)
+    if (Number(req.params.userId) === Number(req.user.id))
       return res
         .status(400)
         .json({ error: "You cannot remove your own administrator account." });
@@ -1452,23 +1658,32 @@ app.delete(
       const targetUser = targetRes.rows[0];
       if (!targetUser) {
         await client.query("ROLLBACK");
-        return res.status(404).json({ error: "Verifier account not found." });
+        return res.status(404).json({ error: "User account not found." });
       }
 
       const result = await client.query(
-        "DELETE FROM users WHERE user_id = $1 AND role = 'staff' RETURNING user_id",
+        "DELETE FROM users WHERE user_id = $1 RETURNING user_id",
         [req.params.userId],
       );
       if (!result.rows[0]) {
         await client.query("ROLLBACK");
-        return res.status(404).json({ error: "Verifier account not found." });
+        return res.status(404).json({ error: "User account not found." });
       }
+
+      invalidateSessionsForUser(req.params.userId);
+
+      const roleLabel =
+        targetUser.role === "staff"
+          ? "verifier"
+          : targetUser.role === "admin"
+          ? "administrator"
+          : "user";
 
       await logDelete(client, {
         actor: req.user,
         entityType: "users",
         entityId: req.params.userId,
-        description: `Admin deleted verifier account "${targetUser.name || targetUser.email || req.params.userId}"`,
+        description: `Admin deleted ${roleLabel} account "${targetUser.name || targetUser.email || req.params.userId}"`,
         oldValues: targetUser,
         req,
       });
@@ -1479,7 +1694,7 @@ app.delete(
       await client.query("ROLLBACK");
       if (error.code === "23503")
         return res.status(409).json({
-          error: "This verifier has related records and cannot be removed.",
+          error: "This account has related records (reports, claims, or audits) and cannot be removed.",
         });
       throw error;
     } finally {

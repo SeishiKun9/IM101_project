@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { apiRequest } from "../../api/client.js";
+import CampusLogoBranding from "./CampusLogoBranding.jsx";
 
 export default function LocationMapManagement() {
   const [activeTab, setActiveTab] = useState("buildings"); // "buildings" | "floors" | "rooms" | "maps"
@@ -390,6 +391,13 @@ export default function LocationMapManagement() {
           onClick={() => setActiveTab("maps")}
         >
           Campus Maps ({maps.length})
+        </button>
+        <button
+          type="button"
+          className={`sub-tab-btn ${activeTab === "branding" ? "active" : ""}`}
+          onClick={() => setActiveTab("branding")}
+        >
+          Campus Identity &amp; Logo
         </button>
       </div>
 
@@ -1025,6 +1033,11 @@ export default function LocationMapManagement() {
           </div>
         </div>
       )}
+
+      {/* ============================================================ */}
+      {/* CAMPUS IDENTITY & LOGO BRANDING TAB */}
+      {/* ============================================================ */}
+      {activeTab === "branding" && <CampusLogoBranding />}
 
       {/* ============================================================ */}
       {/* MODALS */}

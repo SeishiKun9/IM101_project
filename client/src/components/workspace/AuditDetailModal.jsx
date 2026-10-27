@@ -1,13 +1,16 @@
 import React, { useEffect, useState, useMemo } from "react";
 import { apiRequest } from "../../api/client.js";
 
-export default function AuditDetailModal({ log, logs = [], onSelectLog, onClose }) {
+export default function AuditDetailModal({ log, logs = [], onSelectLog, onClose, onRecover }) {
   const [activeTab, setActiveTab] = useState("visual"); // "visual" | "snapshots" | "raw"
   const [copyNotice, setCopyNotice] = useState("");
   const [detailedLog, setDetailedLog] = useState(log);
+  const [recovering, setRecovering] = useState(false);
+  const [recoverError, setRecoverError] = useState("");
 
   useEffect(() => {
     setDetailedLog(log);
+    setRecoverError("");
     if (!log?.id) return;
     let active = true;
     apiRequest(`/admin/audit-logs/${log.id}`)
@@ -23,6 +26,33 @@ export default function AuditDetailModal({ log, logs = [], onSelectLog, onClose 
       active = false;
     };
   }, [log?.id]);
+
+  async function handleModalRecover() {
+    if (!currentLog) return;
+    const entity = currentLog.entity_type || currentLog.entityType || "record";
+    const id = currentLog.entity_id || currentLog.entityId || "";
+    const confirmed = window.confirm(
+      `Are you sure you want to recover deleted ${entity}${id ? ` #${id}` : ""}? This will restore the record back into the database from its audit snapshot.`
+    );
+    if (!confirmed) return;
+
+    setRecovering(true);
+    setRecoverError("");
+    try {
+      await apiRequest(`/admin/audit-logs/${currentLog.id}/recover`, {
+        method: "POST",
+      });
+      if (onRecover) {
+        onRecover();
+      } else {
+        onClose();
+      }
+    } catch (err) {
+      setRecoverError(err.message || "Failed to recover deleted record.");
+    } finally {
+      setRecovering(false);
+    }
+  }
 
   const currentLog = detailedLog || log;
 
@@ -530,13 +560,38 @@ export default function AuditDetailModal({ log, logs = [], onSelectLog, onClose 
           )}
         </div>
 
+        {recoverError && (
+          <div className="alert-banner alert-danger" style={{ margin: "0 28px 12px 28px" }}>
+            <strong>Recovery Error:</strong> {recoverError}
+          </div>
+        )}
+
         <footer className="modal-footer audit-modal-footer">
           <div className="modal-footer-hint">
             <kbd>Esc</kbd> to close &nbsp;·&nbsp; <kbd>◀</kbd> <kbd>▶</kbd> to navigate records
           </div>
-          <button className="btn btn-primary" onClick={onClose} type="button">
-            Done
-          </button>
+          <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+            {(action === "DELETE" || action === "REMOVE") && (
+              <button
+                className="btn btn-warning"
+                onClick={handleModalRecover}
+                disabled={recovering}
+                type="button"
+                style={{
+                  background: "#d97706",
+                  borderColor: "#b45309",
+                  color: "#ffffff",
+                  fontWeight: 600,
+                  fontSize: "13px",
+                }}
+              >
+                {recovering ? "↺ Recovering..." : "↺ Recover Deleted Record"}
+              </button>
+            )}
+            <button className="btn btn-secondary" onClick={onClose} type="button">
+              Close
+            </button>
+          </div>
         </footer>
       </div>
     </div>

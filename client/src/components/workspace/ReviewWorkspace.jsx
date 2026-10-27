@@ -200,7 +200,7 @@ export default function ReviewWorkspace({ user, onChanged }) {
       },
       {
         id: "accounts",
-        label: "Create Verifier",
+        label: "Create Accounts",
         icon: (
           <svg
             width="18"
