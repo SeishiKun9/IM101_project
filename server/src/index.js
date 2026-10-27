@@ -1,5 +1,6 @@
 import "dotenv/config";
 import crypto from "node:crypto";
+import fs from "node:fs";
 import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1783,9 +1784,13 @@ app.use((error, req, res, next) => {
     .status(500)
     .json({ error: "The server could not complete that request." });
 });
-app.get("*", (req, res) =>
-  res.sendFile(path.join(__dirname, "../../client/index.html")),
-);
+app.get("*", (req, res) => {
+  const distIndex = path.join(__dirname, "../../client/dist/index.html");
+  if (fs.existsSync(distIndex)) {
+    return res.sendFile(distIndex);
+  }
+  res.sendFile(path.join(__dirname, "../../client/index.html"));
+});
 
 async function startServer() {
   if (pool) {
