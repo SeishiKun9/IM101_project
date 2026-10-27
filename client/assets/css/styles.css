@@ -6392,4 +6392,224 @@ img,
   justify-content: flex-end;
 }
 
+/* ============================================================
+   PHASE 4: ADVANCED SEARCH, DATE FILTERS & PAGINATION (Items 6 & 7)
+   ============================================================ */
+.date-filter-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+}
+
+.date-filter-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.toolbar-date-input {
+  background: transparent;
+  border: none;
+  color: var(--text-main);
+  font-family: inherit;
+  font-size: 12.5px;
+  outline: none;
+  cursor: pointer;
+}
+
+.toolbar-date-input::-webkit-calendar-picker-indicator {
+  filter: invert(0.7);
+  cursor: pointer;
+}
+
+.date-sep {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.clear-date-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+  border-radius: 4px;
+}
+
+.clear-date-btn:hover {
+  color: var(--text-main);
+  background: var(--surface-alt);
+}
+
+.active-filters-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+
+.active-filters-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 9999px;
+  padding: 3px 10px;
+  font-size: 11.5px;
+  color: var(--text-main);
+}
+
+.filter-chip strong {
+  color: var(--primary, #3b82f6);
+}
+
+.filter-chip-remove {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.filter-chip-remove:hover {
+  color: var(--danger, #ef4444);
+}
+
+.reset-all-filters-btn {
+  background: none;
+  border: none;
+  color: var(--primary, #3b82f6);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 3px 8px;
+  border-radius: 4px;
+  transition: opacity var(--transition-fast);
+}
+
+.reset-all-filters-btn:hover {
+  opacity: 0.8;
+  text-decoration: underline;
+}
+
+/* Pagination Bar */
+.pagination-wrapper {
+  margin-top: 36px;
+  padding: 16px 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.pagination-info {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.pagination-info strong {
+  color: var(--text-main);
+}
+
+.pagination-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pagination-btn {
+  min-width: 36px;
+  height: 36px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  color: var(--text-main);
+  font-size: 13px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  user-select: none;
+}
+
+.pagination-btn:hover:not(:disabled) {
+  background: var(--surface-hover, rgba(255, 255, 255, 0.08));
+  border-color: var(--primary, #3b82f6);
+  color: var(--text-main);
+}
+
+.pagination-btn.active {
+  background: var(--primary, #3b82f6);
+  border-color: var(--primary, #3b82f6);
+  color: #ffffff;
+  font-weight: 700;
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.35);
+}
+
+.pagination-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.pagination-ellipsis {
+  padding: 0 6px;
+  color: var(--text-muted);
+  font-size: 14px;
+  user-select: none;
+}
+
+.pagination-per-page {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.pagination-per-page .limit-select {
+  padding: 6px 10px;
+  font-size: 12.5px;
+}
+
+@media (max-width: 640px) {
+  .pagination-wrapper {
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+  }
+  .pagination-nav {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+}
+
 

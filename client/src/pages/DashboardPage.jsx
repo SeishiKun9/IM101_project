@@ -1,41 +1,98 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
+import { apiRequest } from "../api/client.js";
 import ItemCard from "../components/ItemCard.jsx";
 import { statusText } from "../constants/statuses.js";
 
+function getPageNumbers(currentPage, totalPages) {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, i) => i + 1);
+  }
+  if (currentPage <= 4) {
+    return [1, 2, 3, 4, 5, "...", totalPages];
+  }
+  if (currentPage >= totalPages - 3) {
+    return [
+      1,
+      "...",
+      totalPages - 4,
+      totalPages - 3,
+      totalPages - 2,
+      totalPages - 1,
+      totalPages,
+    ];
+  }
+  return [
+    1,
+    "...",
+    currentPage - 1,
+    currentPage,
+    currentPage + 1,
+    "...",
+    totalPages,
+  ];
+}
+
 export default function DashboardPage({
-  items,
-  lostCount,
-  search,
+  items = [],
+  lostCount = 0,
+  search = "",
   setSearch,
-  type,
+  type = "all",
   setType,
-  status,
+  status = "all",
   setStatus,
+  category = "all",
+  setCategory,
+  dateFrom = "",
+  setDateFrom,
+  dateTo = "",
+  setDateTo,
+  sort = "newest",
+  setSort,
+  onResetFilters,
+  page = 1,
+  setPage,
+  limit = 12,
+  setLimit,
+  pagination = {
+    total: 0,
+    page: 1,
+    limit: 12,
+    totalPages: 1,
+    hasNext: false,
+    hasPrev: false,
+  },
+  loading = false,
   user,
-  userReports,
+  userReports = [],
   onOpenReport,
   onOpenLostReport,
   onOpenFoundReport,
   onClaimItem,
   onSelectItem,
 }) {
-  const [selectedCategory, setSelectedCategory] = useState("all");
+  const [dbCategories, setDbCategories] = useState([]);
 
-  // Extract categories dynamically from the loaded items
+  useEffect(() => {
+    apiRequest("/categories")
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setDbCategories(data.map((c) => c.name));
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Merge database categories with any from currently loaded items
   const categories = [
     "all",
     ...Array.from(
-      new Set(items.map((item) => item.category?.trim()).filter(Boolean)),
-    ).sort(),
+      new Set([
+        ...dbCategories,
+        ...items.map((item) => item.category?.trim()).filter(Boolean),
+      ]),
+    ).sort((a, b) => a.localeCompare(b)),
   ];
-
-  // Filter items locally by category if specified
-  const filteredItems = items.filter((item) => {
-    if (selectedCategory === "all") return true;
-    return (
-      item.category?.trim().toLowerCase() === selectedCategory.toLowerCase()
-    );
-  });
 
   const typeButtons = [
     { value: "all", label: "All Items" },
@@ -45,7 +102,7 @@ export default function DashboardPage({
     <button
       key={value}
       className={type === value ? "filter-pill active" : "filter-pill"}
-      onClick={() => setType(value)}
+      onClick={() => setType?.(value)}
       type="button"
     >
       {label}
@@ -63,6 +120,23 @@ export default function DashboardPage({
       {statusText(value)}
     </option>
   ));
+
+  const hasActiveFilters = Boolean(
+    (search && search.trim()) ||
+      type !== "all" ||
+      status !== "all" ||
+      category !== "all" ||
+      dateFrom ||
+      dateTo ||
+      sort !== "newest",
+  );
+
+  const totalItems = pagination.total || items.length;
+  const totalPages = pagination.totalPages || 1;
+  const startItem = totalItems === 0 ? 0 : (page - 1) * limit + 1;
+  const endItem = Math.min(page * limit, totalItems);
+
+  const pageNumbers = getPageNumbers(page, totalPages);
 
   return (
     <div className="dashboard-page">
@@ -86,7 +160,7 @@ export default function DashboardPage({
           <div className="hero-actions">
             <button
               className="btn btn-primary btn-lg"
-              onClick={onOpenLostReport || (() => onOpenReport("lost"))}
+              onClick={onOpenLostReport || (() => onOpenReport?.("lost"))}
               type="button"
             >
               <svg
@@ -108,7 +182,7 @@ export default function DashboardPage({
 
             <button
               className="btn btn-accent btn-lg"
-              onClick={onOpenFoundReport || (() => onOpenReport("found"))}
+              onClick={onOpenFoundReport || (() => onOpenReport?.("found"))}
               type="button"
             >
               <svg
@@ -155,8 +229,13 @@ export default function DashboardPage({
             </p>
           </div>
           <div className="items-counter-badge">
-            Showing <strong>{filteredItems.length}</strong> matching{" "}
-            {filteredItems.length === 1 ? "item" : "items"}
+            Showing <strong>{startItem}-{endItem}</strong> of{" "}
+            <strong>{totalItems}</strong> matching {totalItems === 1 ? "item" : "items"}
+            {totalPages > 1 && (
+              <span style={{ opacity: 0.85, marginLeft: 6 }}>
+                (Page {page} of {totalPages})
+              </span>
+            )}
           </div>
         </div>
 
@@ -181,14 +260,14 @@ export default function DashboardPage({
             <input
               className="search-input"
               type="search"
-              placeholder="Search by title, location, description..."
+              placeholder="Search by keywords, title, location, category..."
               value={search}
-              onChange={(event) => setSearch(event.target.value)}
+              onChange={(event) => setSearch?.(event.target.value)}
             />
             {search && (
               <button
                 className="clear-search-btn"
-                onClick={() => setSearch("")}
+                onClick={() => setSearch?.("")}
                 type="button"
                 aria-label="Clear search"
               >
@@ -201,41 +280,201 @@ export default function DashboardPage({
             <div className="type-pills">{typeButtons}</div>
 
             <div className="select-filters">
-              {categories.length > 2 && (
-                <select
-                  className="toolbar-select"
-                  value={selectedCategory}
-                  onChange={(e) => setSelectedCategory(e.target.value)}
-                  aria-label="Filter by category"
-                >
-                  <option value="all">All categories</option>
-                  {categories
-                    .filter((c) => c !== "all")
-                    .map((cat) => (
-                      <option key={cat} value={cat}>
-                        Category: {cat}
-                      </option>
-                    ))}
-                </select>
-              )}
+              {/* Category Filter */}
+              <select
+                className="toolbar-select"
+                value={category}
+                onChange={(e) => setCategory?.(e.target.value)}
+                aria-label="Filter by category"
+              >
+                <option value="all">All categories</option>
+                {categories
+                  .filter((c) => c !== "all")
+                  .map((cat) => (
+                    <option key={cat} value={cat}>
+                      Category: {cat}
+                    </option>
+                  ))}
+              </select>
 
+              {/* Status Filter */}
               <select
                 className="toolbar-select"
                 value={status}
-                onChange={(event) => setStatus(event.target.value)}
+                onChange={(event) => setStatus?.(event.target.value)}
                 aria-label="Filter by status"
               >
                 <option value="all">All statuses</option>
                 {statusOptions}
               </select>
+
+              {/* Sort Order Selector */}
+              <select
+                className="toolbar-select"
+                value={sort}
+                onChange={(e) => setSort?.(e.target.value)}
+                aria-label="Sort reports"
+              >
+                <option value="newest">Sort: Newest First</option>
+                <option value="oldest">Sort: Oldest First</option>
+                <option value="title_asc">Sort: Title (A-Z)</option>
+                <option value="title_desc">Sort: Title (Z-A)</option>
+              </select>
+
+              {/* Date Range Picker */}
+              <div className="date-filter-group" title="Filter by date reported">
+                <span className="date-filter-label">Reported:</span>
+                <input
+                  type="date"
+                  className="toolbar-date-input"
+                  value={dateFrom}
+                  onChange={(e) => setDateFrom?.(e.target.value)}
+                  title="From date"
+                  aria-label="From date"
+                />
+                <span className="date-sep">to</span>
+                <input
+                  type="date"
+                  className="toolbar-date-input"
+                  value={dateTo}
+                  onChange={(e) => setDateTo?.(e.target.value)}
+                  title="To date"
+                  aria-label="To date"
+                />
+                {(dateFrom || dateTo) && (
+                  <button
+                    type="button"
+                    className="clear-date-btn"
+                    onClick={() => {
+                      setDateFrom?.("");
+                      setDateTo?.("");
+                    }}
+                    title="Clear date range"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
             </div>
           </div>
+
+          {/* Active Filter Chips */}
+          {hasActiveFilters && (
+            <div className="active-filters-bar">
+              <span className="active-filters-label">Active Filters:</span>
+
+              {search && search.trim() && (
+                <span className="filter-chip">
+                  Keyword: <strong>"{search.trim()}"</strong>
+                  <button
+                    type="button"
+                    className="filter-chip-remove"
+                    onClick={() => setSearch?.("")}
+                    title="Remove keyword filter"
+                  >
+                    ×
+                  </button>
+                </span>
+              )}
+
+              {type !== "all" && (
+                <span className="filter-chip">
+                  Type: <strong>{type === "lost" ? "Lost" : "Found"}</strong>
+                  <button
+                    type="button"
+                    className="filter-chip-remove"
+                    onClick={() => setType?.("all")}
+                    title="Remove type filter"
+                  >
+                    ×
+                  </button>
+                </span>
+              )}
+
+              {category !== "all" && (
+                <span className="filter-chip">
+                  Category: <strong>{category}</strong>
+                  <button
+                    type="button"
+                    className="filter-chip-remove"
+                    onClick={() => setCategory?.("all")}
+                    title="Remove category filter"
+                  >
+                    ×
+                  </button>
+                </span>
+              )}
+
+              {status !== "all" && (
+                <span className="filter-chip">
+                  Status: <strong>{statusText(status)}</strong>
+                  <button
+                    type="button"
+                    className="filter-chip-remove"
+                    onClick={() => setStatus?.("all")}
+                    title="Remove status filter"
+                  >
+                    ×
+                  </button>
+                </span>
+              )}
+
+              {(dateFrom || dateTo) && (
+                <span className="filter-chip">
+                  Date:{" "}
+                  <strong>
+                    {dateFrom || "Any"} to {dateTo || "Today"}
+                  </strong>
+                  <button
+                    type="button"
+                    className="filter-chip-remove"
+                    onClick={() => {
+                      setDateFrom?.("");
+                      setDateTo?.("");
+                    }}
+                    title="Remove date filter"
+                  >
+                    ×
+                  </button>
+                </span>
+              )}
+
+              {sort !== "newest" && (
+                <span className="filter-chip">
+                  Sort:{" "}
+                  <strong>
+                    {sort === "oldest"
+                      ? "Oldest"
+                      : sort === "title_asc"
+                        ? "A-Z"
+                        : "Z-A"}
+                  </strong>
+                  <button
+                    type="button"
+                    className="filter-chip-remove"
+                    onClick={() => setSort?.("newest")}
+                    title="Reset sort to newest"
+                  >
+                    ×
+                  </button>
+                </span>
+              )}
+
+              <button
+                type="button"
+                className="reset-all-filters-btn"
+                onClick={() => onResetFilters?.()}
+              >
+                Reset All Filters
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Item Cards Grid */}
-        <div className="item-grid">
-          {filteredItems.length ? (
-            filteredItems.map((item) => {
+        <div className={`item-grid ${loading ? "opacity-loading" : ""}`}>
+          {items.length ? (
+            items.map((item) => {
               const cardItem = {
                 ...item,
                 eligibleToClaim:
@@ -274,26 +513,15 @@ export default function DashboardPage({
               </div>
               <h3>No matching items found</h3>
               <p>
-                {search ||
-                type !== "all" ||
-                status !== "all" ||
-                selectedCategory !== "all"
-                  ? "Try adjusting your search terms or clearing filters to see more results."
+                {hasActiveFilters
+                  ? "Try adjusting your search terms, widening your date range, or clearing filters to see more results."
                   : "There are currently no public items reported in the registry."}
               </p>
-              {(search ||
-                type !== "all" ||
-                status !== "all" ||
-                selectedCategory !== "all") && (
+              {hasActiveFilters && (
                 <button
                   className="btn btn-secondary"
                   type="button"
-                  onClick={() => {
-                    setSearch("");
-                    setType("all");
-                    setStatus("all");
-                    setSelectedCategory("all");
-                  }}
+                  onClick={() => onResetFilters?.()}
                 >
                   Reset all filters
                 </button>
@@ -301,6 +529,73 @@ export default function DashboardPage({
             </div>
           )}
         </div>
+
+        {/* Pagination Bar (Item 6) */}
+        {totalItems > 0 && (
+          <div className="pagination-wrapper">
+            <div className="pagination-info">
+              Showing <strong>{startItem}</strong> - <strong>{endItem}</strong> of{" "}
+              <strong>{totalItems}</strong> items
+            </div>
+
+            <div className="pagination-nav">
+              <button
+                type="button"
+                className="pagination-btn"
+                onClick={() => setPage?.(page - 1)}
+                disabled={!pagination.hasPrev || loading}
+                aria-label="Previous page"
+              >
+                ‹ Prev
+              </button>
+
+              {pageNumbers.map((p, idx) =>
+                p === "..." ? (
+                  <span key={`dots-${idx}`} className="pagination-ellipsis">
+                    …
+                  </span>
+                ) : (
+                  <button
+                    key={p}
+                    type="button"
+                    className={`pagination-btn ${p === page ? "active" : ""}`}
+                    onClick={() => setPage?.(p)}
+                    disabled={loading}
+                  >
+                    {p}
+                  </button>
+                ),
+              )}
+
+              <button
+                type="button"
+                className="pagination-btn"
+                onClick={() => setPage?.(page + 1)}
+                disabled={!pagination.hasNext || loading}
+                aria-label="Next page"
+              >
+                Next ›
+              </button>
+            </div>
+
+            <div className="pagination-per-page">
+              <span>Show</span>
+              <select
+                className="toolbar-select limit-select"
+                value={limit}
+                onChange={(e) => {
+                  setLimit?.(Number(e.target.value));
+                  setPage?.(1);
+                }}
+                aria-label="Items per page"
+              >
+                <option value={12}>12 / page</option>
+                <option value={24}>24 / page</option>
+                <option value={48}>48 / page</option>
+              </select>
+            </div>
+          </div>
+        )}
       </section>
     </div>
   );

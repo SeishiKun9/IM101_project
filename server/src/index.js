@@ -710,31 +710,141 @@ app.get(
 );
 
 app.get(
+  "/api/categories",
+  requireDatabase,
+  asyncRoute(async (req, res) => {
+    const result = await pool.query(
+      "SELECT category_id AS id, category_name AS name FROM categories ORDER BY category_name ASC",
+    );
+    res.json(result.rows);
+  }),
+);
+
+app.get(
   "/api/items",
   requireDatabase,
   asyncRoute(async (req, res) => {
     const values = [];
     const where = [];
+
+    // 1. Multi-token Search across multiple fields (Item 7)
     if (req.query.search) {
-      values.push(`%${String(req.query.search).trim()}%`);
-      where.push(
-        `(i.title ILIKE $${values.length} OR i.description ILIKE $${values.length})`,
-      );
+      const rawSearch = String(req.query.search).trim();
+      if (rawSearch) {
+        // Split by whitespace to support multi-term searches (e.g. "laptop scanlon blue")
+        const tokens = rawSearch.split(/\s+/).filter(Boolean);
+        for (const token of tokens) {
+          values.push(`%${token}%`);
+          const idx = values.length;
+          where.push(`(
+            i.title ILIKE $${idx} OR
+            i.description ILIKE $${idx} OR
+            c.category_name ILIKE $${idx} OR
+            b.name ILIKE $${idx} OR
+            r.name ILIKE $${idx} OR
+            i.location_description ILIKE $${idx} OR
+            i.location_snapshot->>'buildingName' ILIKE $${idx} OR
+            i.location_snapshot->>'roomName' ILIKE $${idx}
+          )`);
+        }
+      }
     }
+
+    // 2. Type Filter
     if (["lost", "found"].includes(req.query.type)) {
       values.push(req.query.type);
       where.push(`i.item_type = $${values.length}`);
     }
+
+    // 3. Status Filter
     if (req.query.status && req.query.status !== "all") {
       values.push(req.query.status);
       where.push(`i.status = $${values.length}`);
     }
+
+    // 4. Category Filter (Item 7)
+    if (req.query.category && req.query.category !== "all") {
+      values.push(String(req.query.category).trim());
+      where.push(`LOWER(c.category_name) = LOWER($${values.length})`);
+    }
+
+    // 5. Date Range Filters (Item 7)
+    const startDate = req.query.startDate || req.query.dateFrom;
+    if (startDate && !isNaN(Date.parse(startDate))) {
+      values.push(startDate);
+      where.push(`i.date_reported >= $${values.length}::date`);
+    }
+
+    const endDate = req.query.endDate || req.query.dateTo;
+    if (endDate && !isNaN(Date.parse(endDate))) {
+      values.push(endDate);
+      where.push(`i.date_reported <= $${values.length}::date`);
+    }
+
+    // 6. Building Filter
+    if (req.query.building && req.query.building !== "all") {
+      values.push(String(req.query.building).trim());
+      where.push(`(LOWER(b.name) = LOWER($${values.length}) OR LOWER(i.location_snapshot->>'buildingName') = LOWER($${values.length}))`);
+    }
+
     const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
-    const result = await pool.query(
-      `SELECT ${publicItemFields} FROM items i ${itemLocationJoins} ${whereSql} ORDER BY i.created_at DESC LIMIT 100`,
+
+    // 7. Dynamic Sorting (Item 7)
+    let orderBySql = "ORDER BY i.date_reported DESC, i.created_at DESC";
+    if (req.query.sort === "oldest") {
+      orderBySql = "ORDER BY i.date_reported ASC, i.created_at ASC";
+    } else if (req.query.sort === "title_asc") {
+      orderBySql = "ORDER BY LOWER(i.title) ASC, i.created_at DESC";
+    } else if (req.query.sort === "title_desc") {
+      orderBySql = "ORDER BY LOWER(i.title) DESC, i.created_at DESC";
+    }
+
+    // 8. Pagination (Item 6)
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 12));
+    const offset = (page - 1) * limit;
+
+    // Count query with same filter conditions
+    const countResult = await pool.query(
+      `SELECT COUNT(*)::int AS total FROM items i ${itemLocationJoins} ${whereSql}`,
       values,
     );
-    res.json(result.rows);
+    const total = countResult.rows[0]?.total || 0;
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+
+    // Items query with pagination limit & offset
+    values.push(limit);
+    const limitIdx = values.length;
+    values.push(offset);
+    const offsetIdx = values.length;
+
+    const result = await pool.query(
+      `SELECT ${publicItemFields} FROM items i ${itemLocationJoins} ${whereSql} ${orderBySql} LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+      values,
+    );
+
+    const paginationData = {
+      total,
+      page,
+      limit,
+      totalPages,
+      hasNext: page < totalPages,
+      hasPrev: page > 1,
+    };
+
+    res.set("X-Total-Count", String(total));
+    res.set("X-Total-Pages", String(totalPages));
+    res.set("X-Current-Page", String(page));
+
+    // If caller explicitly requested format=array for legacy test scripts
+    if (req.query.format === "array") {
+      return res.json(result.rows);
+    }
+
+    res.json({
+      items: result.rows,
+      pagination: paginationData,
+    });
   }),
 );
 

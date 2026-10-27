@@ -33,6 +33,21 @@ export default function App() {
   const [search, setSearch] = useState("");
   const [type, setType] = useState("all");
   const [status, setStatus] = useState("all");
+  const [category, setCategory] = useState("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [sort, setSort] = useState("newest");
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(12);
+  const [pagination, setPagination] = useState({
+    total: 0,
+    page: 1,
+    limit: 12,
+    totalPages: 1,
+    hasNext: false,
+    hasPrev: false,
+  });
+  const [itemsLoading, setItemsLoading] = useState(false);
 
   const [message, setMessage] = useState("");
   const [authOpen, setAuthOpen] = useState(false);
@@ -46,18 +61,83 @@ export default function App() {
   const [pendingAction, setPendingAction] = useState(null);
   const [resetTokenFromUrl, setResetTokenFromUrl] = useState("");
 
-  async function loadItems() {
-    const query = new URLSearchParams({ search });
+  async function loadItems(overridePage = page, overrideLimit = limit) {
+    const query = new URLSearchParams();
+    if (search.trim()) query.set("search", search.trim());
     if (type !== "all") query.set("type", type);
     if (status !== "all") query.set("status", status);
+    if (category !== "all") query.set("category", category);
+    if (dateFrom) query.set("dateFrom", dateFrom);
+    if (dateTo) query.set("dateTo", dateTo);
+    if (sort !== "newest") query.set("sort", sort);
+    query.set("page", overridePage);
+    query.set("limit", overrideLimit);
+
     try {
-      const fetchedItems = await apiRequest(`/items?${query.toString()}`);
-      setItems(fetchedItems);
+      setItemsLoading(true);
+      const res = await apiRequest(`/items?${query.toString()}`);
+      if (Array.isArray(res)) {
+        setItems(res);
+        setPagination({
+          total: res.length,
+          page: overridePage,
+          limit: overrideLimit,
+          totalPages: Math.max(1, Math.ceil(res.length / overrideLimit)),
+          hasNext: false,
+          hasPrev: overridePage > 1,
+        });
+      } else {
+        setItems(res.items || []);
+        if (res.pagination) {
+          setPagination(res.pagination);
+        }
+      }
       const stats = await apiRequest("/stats");
       setLostCount(stats.lostCount || 0);
     } catch (requestError) {
       setMessage(requestError.message);
+    } finally {
+      setItemsLoading(false);
     }
+  }
+
+  function handleSearchChange(newSearch) {
+    setSearch(newSearch);
+    if (page !== 1) setPage(1);
+  }
+  function handleTypeChange(newType) {
+    setType(newType);
+    if (page !== 1) setPage(1);
+  }
+  function handleStatusChange(newStatus) {
+    setStatus(newStatus);
+    if (page !== 1) setPage(1);
+  }
+  function handleCategoryChange(newCategory) {
+    setCategory(newCategory);
+    if (page !== 1) setPage(1);
+  }
+  function handleDateFromChange(newDateFrom) {
+    setDateFrom(newDateFrom);
+    if (page !== 1) setPage(1);
+  }
+  function handleDateToChange(newDateTo) {
+    setDateTo(newDateTo);
+    if (page !== 1) setPage(1);
+  }
+  function handleSortChange(newSort) {
+    setSort(newSort);
+    if (page !== 1) setPage(1);
+  }
+  function handleResetFilters() {
+    setSearch("");
+    setType("all");
+    setStatus("all");
+    setCategory("all");
+    setDateFrom("");
+    setDateTo("");
+    setSort("newest");
+    setPage(1);
   }
 
   async function loadReports() {
@@ -74,8 +154,8 @@ export default function App() {
   }
 
   useEffect(() => {
-    loadItems();
-  }, [search, type, status]);
+    loadItems(page, limit);
+  }, [page, limit, search, type, status, category, dateFrom, dateTo, sort]);
 
   useEffect(() => {
     loadReports();
@@ -161,11 +241,26 @@ export default function App() {
                 items={items}
                 lostCount={lostCount}
                 search={search}
-                setSearch={setSearch}
+                setSearch={handleSearchChange}
                 type={type}
-                setType={setType}
+                setType={handleTypeChange}
                 status={status}
-                setStatus={setStatus}
+                setStatus={handleStatusChange}
+                category={category}
+                setCategory={handleCategoryChange}
+                dateFrom={dateFrom}
+                setDateFrom={handleDateFromChange}
+                dateTo={dateTo}
+                setDateTo={handleDateToChange}
+                sort={sort}
+                setSort={handleSortChange}
+                onResetFilters={handleResetFilters}
+                page={page}
+                setPage={setPage}
+                limit={limit}
+                setLimit={setLimit}
+                pagination={pagination}
+                loading={itemsLoading}
                 user={user}
                 userReports={reports}
                 onOpenReport={(reportType = "lost") =>
