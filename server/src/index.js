@@ -31,6 +31,12 @@ import {
   validateSchoolEmail,
 } from "./utils/validation.js";
 import { calculateMatchScore } from "./utils/matchScorer.js";
+import {
+  sendPasswordResetEmail,
+  sendClaimDecisionEmail,
+  sendItemMatchedEmail,
+  sendItemHandoverEmail,
+} from "./utils/mailer.js";
 
 const { Pool } = pg;
 const app = express();
@@ -610,6 +616,16 @@ app.post(
       "UPDATE users SET password_reset_token_hash = $1, password_reset_expires_at = now() + interval '15 minutes' WHERE user_id = $2",
       [tokenHash, user.user_id],
     );
+
+    // Send password reset email asynchronously
+    const appUrl = req.headers.origin || req.headers.referer;
+    sendPasswordResetEmail({
+      to: user.email,
+      name: user.name,
+      resetToken,
+      appUrl,
+    }).catch((err) => console.error("[Mailer Error]:", err));
+
     if (process.env.NODE_ENV !== "production") response.resetToken = resetToken;
     res.json(response);
   }),
@@ -1687,6 +1703,24 @@ app.post(
           link: `/?item=${req.params.foundId}`,
           itemId: req.params.foundId,
         });
+
+        // Email the lost item reporter
+        const reporterUserRes = await client.query(
+          "SELECT email, name FROM users WHERE user_id = $1",
+          [lost.rows[0].reporter_id],
+        );
+        const reporterUser = reporterUserRes.rows[0];
+        if (reporterUser?.email) {
+          const appUrl = req.headers.origin || req.headers.referer;
+          sendItemMatchedEmail({
+            to: reporterUser.email,
+            name: reporterUser.name,
+            lostTitle: lost.rows[0].title,
+            foundTitle: found.rows[0].title,
+            itemId: req.params.foundId,
+            appUrl,
+          }).catch((err) => console.error("[Mailer Error]:", err));
+        }
       }
 
       await client.query("COMMIT");
@@ -1894,6 +1928,26 @@ app.post(
           link: `/?item=${prevClaim.item_id}`,
           itemId: prevClaim.item_id,
         });
+
+        // Email the claimant with decision details
+        const claimantInfo = await client.query(
+          "SELECT u.email, u.name, i.title AS item_title FROM users u JOIN items i ON i.item_id = $2 WHERE u.user_id = $1",
+          [prevClaim.claimant_id, prevClaim.item_id],
+        );
+        const claimant = claimantInfo.rows[0];
+        if (claimant?.email) {
+          const appUrl = req.headers.origin || req.headers.referer;
+          sendClaimDecisionEmail({
+            to: claimant.email,
+            name: claimant.name,
+            itemTitle: claimant.item_title || `Item #${prevClaim.item_id}`,
+            decision,
+            reason,
+            claimId: req.params.claimId,
+            itemId: prevClaim.item_id,
+            appUrl,
+          }).catch((err) => console.error("[Mailer Error]:", err));
+        }
       }
 
       await client.query("COMMIT");
@@ -1960,6 +2014,23 @@ app.post(
         link: `/?item=${result.rows[0].item_id}`,
         itemId: result.rows[0].item_id,
       });
+
+      // Email the claimant confirmation receipt
+      const claimantInfo = await pool.query(
+        "SELECT u.email, u.name, i.title AS item_title FROM users u JOIN items i ON i.item_id = $2 WHERE u.user_id = $1",
+        [result.rows[0].claimant_id, result.rows[0].item_id],
+      );
+      const claimant = claimantInfo.rows[0];
+      if (claimant?.email) {
+        const appUrl = req.headers.origin || req.headers.referer;
+        sendItemHandoverEmail({
+          to: claimant.email,
+          name: claimant.name,
+          itemTitle: claimant.item_title || `Item #${result.rows[0].item_id}`,
+          claimId: req.params.claimId,
+          appUrl,
+        }).catch((err) => console.error("[Mailer Error]:", err));
+      }
     }
 
     res.json({ ok: true });

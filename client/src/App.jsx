@@ -40,6 +40,7 @@ export default function App() {
   const [initialReportType, setInitialReportType] = useState("lost");
   const [selectedItem, setSelectedItem] = useState(null);
   const [pendingAction, setPendingAction] = useState(null);
+  const [resetTokenFromUrl, setResetTokenFromUrl] = useState("");
 
   async function loadItems() {
     const query = new URLSearchParams({ search });
@@ -75,6 +76,24 @@ export default function App() {
   useEffect(() => {
     loadReports();
   }, [user]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const token = params.get("resetToken");
+    if (token) {
+      setResetTokenFromUrl(token);
+      setForgotPasswordOpen(true);
+    }
+
+    const itemId = params.get("item");
+    if (itemId) {
+      apiRequest(`/items/${itemId}`)
+        .then((item) => {
+          if (item) setSelectedItem(item);
+        })
+        .catch(() => {});
+    }
+  }, [location.search]);
 
   function requireLogin(action) {
     if (user) {
@@ -273,9 +292,14 @@ export default function App() {
 
       {forgotPasswordOpen && (
         <ForgotPasswordModal
-          onClose={() => setForgotPasswordOpen(false)}
+          initialToken={resetTokenFromUrl}
+          onClose={() => {
+            setForgotPasswordOpen(false);
+            setResetTokenFromUrl("");
+          }}
           onBack={() => {
             setForgotPasswordOpen(false);
+            setResetTokenFromUrl("");
             setAuthMode("signin");
             setAuthOpen(true);
           }}

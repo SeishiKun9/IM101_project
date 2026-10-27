@@ -1,11 +1,12 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { apiRequest } from "../api/client.js";
 import PasswordRequirements from "./PasswordRequirements.jsx";
 import { validatePassword, validateSchoolEmail } from "../utils/validation.js";
 
-export default function ForgotPasswordModal({ onClose, onBack }) {
+export default function ForgotPasswordModal({ initialToken = "", onClose, onBack }) {
+  const [step, setStep] = useState(initialToken ? "reset" : "request");
   const [email, setEmail] = useState("");
-  const [token, setToken] = useState("");
+  const [token, setToken] = useState(initialToken || "");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -14,6 +15,14 @@ export default function ForgotPasswordModal({ onClose, onBack }) {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [resetSuccess, setResetSuccess] = useState(false);
+
+  useEffect(() => {
+    if (initialToken) {
+      setToken(initialToken);
+      setStep("reset");
+    }
+  }, [initialToken]);
 
   async function requestReset(event) {
     event.preventDefault();
@@ -32,8 +41,14 @@ export default function ForgotPasswordModal({ onClose, onBack }) {
         method: "POST",
         body: JSON.stringify({ email: email.trim().toLowerCase() }),
       });
-      setMessage(result.message);
-      if (result.resetToken) setToken(result.resetToken);
+      setMessage(
+        result.message ||
+          "If that account exists, password reset instructions have been emailed to your address.",
+      );
+      if (result.resetToken) {
+        setToken(result.resetToken);
+      }
+      setStep("reset");
     } catch (requestError) {
       setError(requestError.message);
     } finally {
@@ -47,7 +62,7 @@ export default function ForgotPasswordModal({ onClose, onBack }) {
     setMessage("");
 
     if (!token.trim()) {
-      setError("Please provide the security reset token.");
+      setError("Please provide the security reset token from your email.");
       return;
     }
 
@@ -68,7 +83,8 @@ export default function ForgotPasswordModal({ onClose, onBack }) {
         method: "POST",
         body: JSON.stringify({ token: token.trim(), password }),
       });
-      setMessage(result.message);
+      setMessage(result.message || "Password reset successfully! You can sign in now.");
+      setResetSuccess(true);
       setToken("");
       setPassword("");
       setConfirmPassword("");
@@ -101,8 +117,9 @@ export default function ForgotPasswordModal({ onClose, onBack }) {
           Reset Your Password
         </h2>
         <p className="modal-intro">
-          Enter your registered school email to obtain a security reset token
-          for your Client, Verifier, or Administrator account.
+          {step === "request"
+            ? "Enter your registered campus email to receive a secure password reset token."
+            : "Enter the security reset token sent to your email along with your new password."}
         </p>
 
         {message && (
@@ -117,7 +134,20 @@ export default function ForgotPasswordModal({ onClose, onBack }) {
           </div>
         )}
 
-        {!token ? (
+        {resetSuccess ? (
+          <div style={{ textAlign: "center", padding: "16px 0" }}>
+            <p style={{ fontSize: "15px", color: "var(--text-main)", marginBottom: "20px" }}>
+              Your account password has been updated. You can now log into your account.
+            </p>
+            <button
+              className="btn btn-primary btn-lg full"
+              type="button"
+              onClick={onBack}
+            >
+              Sign In Now →
+            </button>
+          </div>
+        ) : step === "request" ? (
           <form className="auth-form" onSubmit={requestReset} noValidate>
             <div className="form-group">
               <label htmlFor="recovery-email">
@@ -138,8 +168,23 @@ export default function ForgotPasswordModal({ onClose, onBack }) {
               disabled={submitting}
               type="submit"
             >
-              {submitting ? "Sending Request..." : "Request Reset Token"}
+              {submitting ? "Sending Request..." : "Email Reset Token"}
             </button>
+
+            <div style={{ textAlign: "center", marginTop: "12px" }}>
+              <button
+                type="button"
+                className="link-btn"
+                onClick={() => {
+                  setError("");
+                  setMessage("");
+                  setStep("reset");
+                }}
+                style={{ fontSize: "13px" }}
+              >
+                Already have a reset token? Enter it here
+              </button>
+            </div>
           </form>
         ) : (
           <form className="auth-form" onSubmit={resetPassword} noValidate>
@@ -152,8 +197,11 @@ export default function ForgotPasswordModal({ onClose, onBack }) {
                 value={token}
                 onChange={(event) => setToken(event.target.value)}
                 required
-                placeholder="Enter reset token provided"
+                placeholder="Paste the reset token received via email"
               />
+              <small style={{ display: "block", marginTop: "4px", color: "var(--text-muted)", fontSize: "11px" }}>
+                Check your inbox (and spam folder) for the 64-character token. Tokens expire after 15 minutes.
+              </small>
             </div>
 
             <div className="form-group">
@@ -222,6 +270,21 @@ export default function ForgotPasswordModal({ onClose, onBack }) {
             >
               {submitting ? "Updating Password..." : "Set New Password"}
             </button>
+
+            <div style={{ textAlign: "center", marginTop: "12px" }}>
+              <button
+                type="button"
+                className="link-btn"
+                onClick={() => {
+                  setError("");
+                  setMessage("");
+                  setStep("request");
+                }}
+                style={{ fontSize: "13px" }}
+              >
+                ← Request a new reset token by email
+              </button>
+            </div>
           </form>
         )}
 
