@@ -1,5 +1,6 @@
 -- Migration 004: User Profile, Contact Number, Privacy Preferences, and Theme Settings
 
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS contact_number VARCHAR(30);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS default_anonymous BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS default_hide_phone BOOLEAN NOT NULL DEFAULT true;

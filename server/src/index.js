@@ -22,6 +22,7 @@ import {
   logFailure,
   setAuditContext,
 } from "./services/audit.js";
+import { runMigrations } from "../../db/migrate.js";
 
 const { Pool } = pg;
 const app = express();
@@ -29,11 +30,17 @@ const port = Number(process.env.PORT || 3000);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const sessions = new Map();
 const adminSetupToken = process.env.ADMIN_SETUP_TOKEN || "";
+
+const isRemoteDb =
+  process.env.DATABASE_URL &&
+  !process.env.DATABASE_URL.includes("localhost") &&
+  !process.env.DATABASE_URL.includes("127.0.0.1");
+
 const pool = process.env.DATABASE_URL
   ? new Pool({
       connectionString: process.env.DATABASE_URL,
       ssl:
-        process.env.NODE_ENV === "production"
+        process.env.NODE_ENV === "production" || isRemoteDb
           ? { rejectUnauthorized: false }
           : false,
     })
@@ -1779,8 +1786,23 @@ app.use((error, req, res, next) => {
 app.get("*", (req, res) =>
   res.sendFile(path.join(__dirname, "../../client/index.html")),
 );
-app.listen(port, () =>
-  console.log(`Campus Lost & Found running at http://localhost:${port}`),
-);
+
+async function startServer() {
+  if (pool) {
+    try {
+      console.log("Checking and applying database migrations on startup...");
+      await runMigrations(pool);
+      console.log("Database migrations ready.");
+    } catch (err) {
+      console.error("Warning: migration check on startup failed:", err);
+    }
+  }
+
+  app.listen(port, () =>
+    console.log(`Campus Lost & Found running at http://localhost:${port}`),
+  );
+}
+
+startServer();
 
 export { app, pool };

@@ -22,11 +22,18 @@ CREATE TABLE users (
   user_id BIGSERIAL PRIMARY KEY,
   name VARCHAR(120) NOT NULL,
   email CITEXT UNIQUE NOT NULL,
+  username VARCHAR(60) UNIQUE,
   password_hash TEXT NOT NULL,
   password_reset_token_hash TEXT,
   password_reset_expires_at TIMESTAMPTZ,
   role user_role NOT NULL DEFAULT 'student',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  contact_number VARCHAR(30),
+  default_anonymous BOOLEAN NOT NULL DEFAULT false,
+  default_hide_phone BOOLEAN NOT NULL DEFAULT true,
+  theme_preference VARCHAR(10) NOT NULL DEFAULT 'light',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE categories (

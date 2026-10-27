@@ -5,12 +5,13 @@
 -- 1. Ensure pgcrypto extension is available
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
--- 2. Add username column to users if not present, and populate historical usernames
+-- 2. Add username and is_active columns to users if not present, and populate historical usernames
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS username VARCHAR(60);
 
 -- Backfill usernames for known and existing accounts
 UPDATE users SET username = 'allen' WHERE user_id = 1 AND (username IS NULL OR username = '');
-UPDATE users SET username = SPLIT_PART(email::text, '@', 1) WHERE username IS NULL OR username = '';
+UPDATE users SET username = LOWER(SPLIT_PART(email::text, '@', 1)) WHERE username IS NULL OR username = '';
 
 DO $$
 BEGIN
@@ -22,6 +23,10 @@ BEGIN
 END $$;
 
 -- 3. Extend / Harmonize audit_logs table
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id BIGSERIAL PRIMARY KEY
+);
+
 -- Rename legacy audit_id to id if still named audit_id
 DO $$
 BEGIN

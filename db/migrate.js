@@ -7,14 +7,21 @@ import { fileURLToPath } from "node:url";
 const { Pool } = pg;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-if (!process.env.DATABASE_URL) {
-  console.error("DATABASE_URL is not set in environment.");
-  process.exit(1);
-}
+const isRemoteDb =
+  process.env.DATABASE_URL &&
+  !process.env.DATABASE_URL.includes("localhost") &&
+  !process.env.DATABASE_URL.includes("127.0.0.1");
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
+function createPool() {
+  if (!process.env.DATABASE_URL) return null;
+  return new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl:
+      process.env.NODE_ENV === "production" || isRemoteDb
+        ? { rejectUnauthorized: false }
+        : false,
+  });
+}
 
 const campusLocationsSeed = {
   Scanlon: {
@@ -81,17 +88,51 @@ const campusLocationsSeed = {
   Others: { "All floors": ["Other campus area"] },
 };
 
-async function migrate() {
-  const client = await pool.connect();
+export async function runMigrations(customPool = null) {
+  const localPool = customPool || createPool();
+  if (!localPool) {
+    console.error("DATABASE_URL is not set in environment.");
+    if (!customPool) process.exit(1);
+    return;
+  }
+
+  const client = await localPool.connect();
   try {
+    // 0. Ensure enum values and extensions (outside transaction block)
+    await client.query("CREATE EXTENSION IF NOT EXISTS pgcrypto");
+    await client.query("CREATE EXTENSION IF NOT EXISTS citext");
+    try {
+      await client.query("ALTER TYPE item_status ADD VALUE IF NOT EXISTS 'found'");
+    } catch {}
+    try {
+      await client.query("ALTER TYPE item_status ADD VALUE IF NOT EXISTS 'completed'");
+    } catch {}
+    try {
+      await client.query("ALTER TYPE claim_status ADD VALUE IF NOT EXISTS 'claimed'");
+    } catch {}
+
     await client.query("BEGIN");
-    console.log("Running migration 003_locations_and_maps...");
 
-    const sqlPath = path.join(__dirname, "003_locations_and_maps.sql");
-    const sql = fs.readFileSync(sqlPath, "utf8");
-    await client.query(sql);
+    // 1. Workflow & Security Updates (002)
+    const sql002Path = path.join(__dirname, "002_workflow_security.sql");
+    if (fs.existsSync(sql002Path)) {
+      const sql002 = fs.readFileSync(sql002Path, "utf8");
+      // Filter out ALTER TYPE which cannot run in transaction
+      const filteredSql002 = sql002
+        .split("\n")
+        .filter((line) => !line.trim().startsWith("ALTER TYPE"))
+        .join("\n");
+      await client.query(filteredSql002);
+    }
 
-    // 1. Seed initial Campus Map if none exists
+    // 2. Locations & Maps (003)
+    const sql003Path = path.join(__dirname, "003_locations_and_maps.sql");
+    if (fs.existsSync(sql003Path)) {
+      const sql003 = fs.readFileSync(sql003Path, "utf8");
+      await client.query(sql003);
+    }
+
+    // Seed initial Campus Map if none exists
     const mapCheck = await client.query("SELECT map_id FROM campus_maps LIMIT 1");
     let initialMapId = mapCheck.rows[0]?.map_id;
 
@@ -108,10 +149,9 @@ async function migrate() {
         ],
       );
       initialMapId = mapInsert.rows[0].map_id;
-      console.log(`Seeded initial campus map with id ${initialMapId}`);
     }
 
-    // 2. Seed initial buildings, floors, rooms
+    // Seed initial buildings, floors, rooms
     let buildingOrder = 1;
     for (const [buildingName, floors] of Object.entries(campusLocationsSeed)) {
       const bRes = await client.query(
@@ -146,9 +186,8 @@ async function migrate() {
         }
       }
     }
-    console.log("Seeded buildings, floors, and rooms successfully.");
 
-    // 3. Migrate existing items to link to building_id, floor_id, room_id, map_id, and snapshot
+    // Link unlinked legacy items
     const unlinkedItems = await client.query(`
       SELECT i.item_id, i.map_x, i.map_y, l.building, l.floor, l.location_name
       FROM items i
@@ -156,7 +195,6 @@ async function migrate() {
       WHERE i.building_id IS NULL AND i.location_id IS NOT NULL
     `);
 
-    console.log(`Found ${unlinkedItems.rowCount} existing items to map.`);
     for (const item of unlinkedItems.rows) {
       let matchedBuildingId = null;
       let matchedFloorId = null;
@@ -169,7 +207,6 @@ async function migrate() {
         );
         if (b.rows.length) {
           matchedBuildingId = b.rows[0].building_id;
-
           if (item.floor) {
             const f = await client.query(
               "SELECT floor_id, name FROM floors WHERE building_id = $1 AND LOWER(TRIM(name)) = LOWER(TRIM($2))",
@@ -177,7 +214,6 @@ async function migrate() {
             );
             if (f.rows.length) {
               matchedFloorId = f.rows[0].floor_id;
-
               if (item.location_name) {
                 const r = await client.query(
                   "SELECT room_id, name FROM rooms WHERE floor_id = $1 AND LOWER(TRIM(name)) = LOWER(TRIM($2))",
@@ -192,7 +228,6 @@ async function migrate() {
         }
       }
 
-      // Check if map coordinates exist, link to initialMapId
       const hasPin = item.map_x !== null && item.map_y !== null;
       const mapIdToSet = hasPin ? initialMapId : null;
 
@@ -223,28 +258,68 @@ async function migrate() {
       );
     }
 
-    console.log("Running migration 004_profile_and_theme...");
+    // 3. Profile & Theme Preferences (004)
     const sql004Path = path.join(__dirname, "004_profile_and_theme.sql");
-    const sql004 = fs.readFileSync(sql004Path, "utf8");
-    await client.query(sql004);
-    console.log("Applied migration 004 successfully.");
+    if (fs.existsSync(sql004Path)) {
+      const sql004 = fs.readFileSync(sql004Path, "utf8");
+      await client.query(sql004);
+    }
 
-    console.log("Running migration 005_audit_logs...");
+    // 4. Audit Logs & System Branding (005)
     const sql005Path = path.join(__dirname, "005_audit_logs.sql");
-    const sql005 = fs.readFileSync(sql005Path, "utf8");
-    await client.query(sql005);
-    console.log("Applied migration 005 successfully.");
+    if (fs.existsSync(sql005Path)) {
+      const sql005 = fs.readFileSync(sql005Path, "utf8");
+      await client.query(sql005);
+    }
+
+    // 5. Ensure users has is_active and username columns guaranteed
+    await client.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS username VARCHAR(60);
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS contact_number VARCHAR(30);
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS default_anonymous BOOLEAN NOT NULL DEFAULT false;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS default_hide_phone BOOLEAN NOT NULL DEFAULT true;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS theme_preference VARCHAR(10) NOT NULL DEFAULT 'light';
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+    `);
+
+    // 6. Ensure default Administrator account exists
+    const adminCheck = await client.query(
+      "SELECT user_id, email FROM users WHERE role = 'admin' LIMIT 1",
+    );
+    if (adminCheck.rows.length === 0) {
+      console.log("No administrator user found in database. Seeding initial admin...");
+      await client.query(
+        `INSERT INTO users (name, email, username, password_hash, role, is_active, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, 'admin', true, now(), now())
+         ON CONFLICT (email) DO UPDATE SET role = 'admin', is_active = true`,
+        [
+          "Allen Postanes Aguiman",
+          "aguiman.allen@hnu.edu.ph",
+          "allen",
+          "scrypt:0ff61cebbfff71a5d32757ba81869bab:595adf0964fd7d64cb664f146ab0167782bb6eaa1f31ae5081c537ff801a5362b470dcfe3b1b3556f58c0fe3911a74736245f455783601a65e9260f386a5318a",
+        ],
+      );
+      console.log("Seeded default admin user: aguiman.allen@hnu.edu.ph");
+    }
 
     await client.query("COMMIT");
-    console.log("Migration completed successfully!");
+    console.log("Database migrations applied and verified successfully!");
   } catch (err) {
     await client.query("ROLLBACK");
-    console.error("Migration failed:", err);
-    process.exit(1);
+    console.error("Migration error:", err);
+    throw err;
   } finally {
     client.release();
-    await pool.end();
+    if (!customPool) {
+      await localPool.end();
+    }
   }
 }
 
-migrate();
+// If executed directly from CLI: node db/migrate.js
+if (process.argv[1] && process.argv[1].endsWith("migrate.js")) {
+  runMigrations()
+    .then(() => process.exit(0))
+    .catch(() => process.exit(1));
+}
