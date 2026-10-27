@@ -1789,13 +1789,9 @@ app.get("*", (req, res) =>
 
 async function startServer() {
   if (pool) {
-    try {
-      console.log("Checking and applying database migrations on startup...");
-      await runMigrations(pool);
-      console.log("Database migrations ready.");
-    } catch (err) {
-      console.error("Warning: migration check on startup failed:", err);
-    }
+    console.log("Checking and applying database migrations on startup...");
+    await runMigrations(pool);
+    console.log("Database migrations ready.");
   }
 
   app.listen(port, () =>
@@ -1803,6 +1799,16 @@ async function startServer() {
   );
 }
 
-startServer();
+startServer().catch(async (err) => {
+  console.error("Server startup failed:", err);
+  if (pool) {
+    try {
+      await pool.end();
+    } catch (closeError) {
+      console.error("Failed to close database pool:", closeError);
+    }
+  }
+  process.exitCode = 1;
+});
 
 export { app, pool };

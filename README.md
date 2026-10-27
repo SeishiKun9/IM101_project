@@ -22,6 +22,14 @@ The interface includes a static preview when the database is not configured. API
 
 Public registration creates Client accounts. Administrator registration is accepted only with the server-side setup token. Verifier / CSA accounts can only be created by an authenticated Administrator from the Administrator dashboard; the backend rejects direct requests from other roles.
 
+## Deploy to Render and Vercel
+
+1. In Render, create a Blueprint from this repository and use the included `render.yaml`. Set the prompted `ADMIN_SETUP_TOKEN` to a long random secret.
+2. Wait for the Render API and PostgreSQL services to become healthy. The included free PostgreSQL plan is temporary and expires after 30 days.
+3. Import the same repository into Vercel from its root and deploy. `vercel.json` sends `/api` and `/uploads` requests to the Render API service.
+
+Uploads currently use the Render service's local filesystem. Uploaded images and maps can be lost when the service restarts or redeploys; configure persistent storage before relying on them in production.
+
 ## Team workflow
 
 Use feature branches such as `feature/schema-v1`, `feature/audit-procedures`, and `feature/api-crud`. Protect `main`, require pull requests, and use descriptive commits such as `feat: add claim approval procedure`.

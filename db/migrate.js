@@ -105,6 +105,17 @@ export async function runMigrations(customPool = null) {
     try { await client.query("ALTER TYPE item_status ADD VALUE IF NOT EXISTS 'completed'"); } catch {}
     try { await client.query("ALTER TYPE claim_status ADD VALUE IF NOT EXISTS 'claimed'"); } catch {}
 
+    const schemaCheck = await client.query(
+      "SELECT to_regclass('public.users') IS NOT NULL AS initialized",
+    );
+    if (!schemaCheck.rows[0].initialized) {
+      const sql001Path = path.join(__dirname, "001_init.sql");
+      if (!fs.existsSync(sql001Path)) {
+        throw new Error("Initial database schema file db/001_init.sql was not found.");
+      }
+      await client.query(fs.readFileSync(sql001Path, "utf8"));
+    }
+
     // 1. CRITICAL: Ensure audit_logs table and ALL columns exist unconditionally
     try {
       await client.query(`

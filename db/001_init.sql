@@ -186,10 +186,22 @@ BEGIN
   UPDATE items SET status = 'claimed' WHERE item_id = (SELECT item_id FROM claims WHERE claim_id = p_claim_id);
 END; $$;
 
-CREATE ROLE app_readonly NOLOGIN;
+DO $$
+BEGIN
+  CREATE ROLE app_readonly NOLOGIN;
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+  WHEN insufficient_privilege THEN
+    RAISE NOTICE 'Skipping optional app_readonly role: insufficient privilege.';
+END $$;
 
-GRANT USAGE ON SCHEMA public TO app_readonly;
-
-GRANT
-SELECT
-  ON ALL TABLES IN SCHEMA public TO app_readonly;
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_readonly') THEN
+    EXECUTE 'GRANT USAGE ON SCHEMA public TO app_readonly';
+    EXECUTE 'GRANT SELECT ON ALL TABLES IN SCHEMA public TO app_readonly';
+  END IF;
+EXCEPTION
+  WHEN insufficient_privilege THEN
+    RAISE NOTICE 'Skipping optional app_readonly grants: insufficient privilege.';
+END $$;
