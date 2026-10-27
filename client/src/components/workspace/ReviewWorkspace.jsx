@@ -88,11 +88,26 @@ export default function ReviewWorkspace({ user, onChanged }) {
     }
   }
 
+  const [reviewType, setReviewType] = useState("found"); // "found" | "lost"
+
   async function markUnderReview(itemId) {
     try {
       await apiRequest(`/reports/${itemId}/status`, {
         method: "PATCH",
         body: JSON.stringify({ status: "under_review" }),
+      });
+      refresh();
+      onChanged?.();
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
+  async function revertStatus(itemId) {
+    try {
+      await apiRequest(`/reports/${itemId}/status`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "reported" }),
       });
       refresh();
       onChanged?.();
@@ -392,89 +407,220 @@ export default function ReviewWorkspace({ user, onChanged }) {
           {/* TAB 1: COMPARE & REVIEW */}
           {activeTab === "compare" && (
             <section className="workspace-panel">
-              <div className="panel-header-row">
-                <div>
-                  <h2 className="panel-title">
-                    Found Reports Awaiting Verification
-                  </h2>
-                  <p className="panel-subtitle">
-                    Examine newly turned-in items, mark them under review, or
-                    open comparison to link them with matching lost reports.
-                  </p>
-                </div>
-                <span className="panel-counter">
-                  {queue.items.length} item{queue.items.length === 1 ? "" : "s"}
-                </span>
+              <div
+                className="tab-pill-group"
+                style={{
+                  marginBottom: "20px",
+                  display: "flex",
+                  gap: "10px",
+                  borderBottom: "1px solid var(--border)",
+                  paddingBottom: "12px",
+                }}
+              >
+                <button
+                  type="button"
+                  className={`btn btn-sm ${
+                    reviewType === "found" ? "btn-primary" : "btn-secondary"
+                  }`}
+                  onClick={() => setReviewType("found")}
+                >
+                  Found Reports ({queue.items.length})
+                </button>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${
+                    reviewType === "lost" ? "btn-primary" : "btn-secondary"
+                  }`}
+                  onClick={() => setReviewType("lost")}
+                >
+                  Lost Reports ({queue.lost.length})
+                </button>
               </div>
 
-              {queue.items.length ? (
-                <div className="table-responsive">
-                  <table className="workspace-table">
-                    <thead>
-                      <tr>
-                        <th>Item &amp; Category</th>
-                        <th>Turned In Location</th>
-                        <th>Date Found</th>
-                        <th>Status</th>
-                        <th className="text-right">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {queue.items.map((item) => (
-                        <tr key={item.id}>
-                          <td>
-                            <strong>{item.title}</strong>
-                            <small className="table-subtext">
-                              {item.category || "Uncategorized"}
-                            </small>
-                          </td>
-                          <td>{formatLocation(item)}</td>
-                          <td>{item.date}</td>
-                          <td>
-                            <span
-                              className={`status-badge ${
-                                item.status === "under_review"
-                                  ? "status-blue"
-                                  : "status-neutral"
-                              }`}
-                            >
-                              {statusText(item.status)}
-                            </span>
-                          </td>
-                          <td className="text-right">
-                            <div className="action-button-group justify-end">
-                              <button
-                                className="btn btn-primary btn-sm"
-                                onClick={() => {
-                                  setSelected(item);
-                                  setSelectedLost(null);
-                                }}
-                                type="button"
-                              >
-                                Open Comparison
-                              </button>
-                              {item.status === "reported" && (
-                                <button
-                                  className="btn btn-secondary btn-sm"
-                                  onClick={() => markUnderReview(item.id)}
-                                  type="button"
+              {reviewType === "found" ? (
+                <>
+                  <div className="panel-header-row">
+                    <div>
+                      <h2 className="panel-title">
+                        Found Reports Awaiting Verification
+                      </h2>
+                      <p className="panel-subtitle">
+                        Examine newly turned-in items, mark them under review, or
+                        open comparison to link them with matching lost reports.
+                      </p>
+                    </div>
+                    <span className="panel-counter">
+                      {queue.items.length} item
+                      {queue.items.length === 1 ? "" : "s"}
+                    </span>
+                  </div>
+
+                  {queue.items.length ? (
+                    <div className="table-responsive">
+                      <table className="workspace-table">
+                        <thead>
+                          <tr>
+                            <th>Item &amp; Category</th>
+                            <th>Turned In Location</th>
+                            <th>Date Found</th>
+                            <th>Status</th>
+                            <th className="text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {queue.items.map((item) => (
+                            <tr key={item.id}>
+                              <td>
+                                <strong>{item.title}</strong>
+                                <small className="table-subtext">
+                                  {item.category || "Uncategorized"}
+                                </small>
+                              </td>
+                              <td>{formatLocation(item)}</td>
+                              <td>{item.date}</td>
+                              <td>
+                                <span
+                                  className={`status-badge ${
+                                    item.status === "under_review"
+                                      ? "status-blue"
+                                      : "status-neutral"
+                                  }`}
                                 >
-                                  Mark Under Review
-                                </button>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                                  {statusText(item.status)}
+                                </span>
+                              </td>
+                              <td className="text-right">
+                                <div className="action-button-group justify-end">
+                                  <button
+                                    className="btn btn-primary btn-sm"
+                                    onClick={() => {
+                                      setSelected(item);
+                                      const matched = queue.lost.find(
+                                        (l) => l.id === item.reviewLostId,
+                                      );
+                                      setSelectedLost(matched || null);
+                                    }}
+                                    type="button"
+                                  >
+                                    Open Comparison
+                                  </button>
+                                  {item.status === "reported" ? (
+                                    <button
+                                      className="btn btn-secondary btn-sm"
+                                      onClick={() => markUnderReview(item.id)}
+                                      type="button"
+                                    >
+                                      Mark Under Review
+                                    </button>
+                                  ) : (
+                                    <button
+                                      className="btn btn-secondary btn-sm"
+                                      onClick={() => revertStatus(item.id)}
+                                      type="button"
+                                      title="Reset item back to reported status"
+                                    >
+                                      Reset to Reported
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="empty-panel-state">
+                      <p>
+                        All found reports have been reviewed or matched. Great work!
+                      </p>
+                    </div>
+                  )}
+                </>
               ) : (
-                <div className="empty-panel-state">
-                  <p>
-                    All found reports have been reviewed or matched. Great work!
-                  </p>
-                </div>
+                <>
+                  <div className="panel-header-row">
+                    <div>
+                      <h2 className="panel-title">
+                        Lost Reports Awaiting Verification
+                      </h2>
+                      <p className="panel-subtitle">
+                        Student-submitted lost reports. Mark them under review while searching for matches or when potential candidates are found.
+                      </p>
+                    </div>
+                    <span className="panel-counter">
+                      {queue.lost.length} item
+                      {queue.lost.length === 1 ? "" : "s"}
+                    </span>
+                  </div>
+
+                  {queue.lost.length ? (
+                    <div className="table-responsive">
+                      <table className="workspace-table">
+                        <thead>
+                          <tr>
+                            <th>Item &amp; Category</th>
+                            <th>Last Known Location</th>
+                            <th>Date Lost</th>
+                            <th>Status</th>
+                            <th className="text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {queue.lost.map((item) => (
+                            <tr key={item.id}>
+                              <td>
+                                <strong>{item.title}</strong>
+                                <small className="table-subtext">
+                                  {item.category || "Uncategorized"}
+                                </small>
+                              </td>
+                              <td>{formatLocation(item)}</td>
+                              <td>{item.date}</td>
+                              <td>
+                                <span
+                                  className={`status-badge ${
+                                    item.status === "under_review"
+                                      ? "status-blue"
+                                      : "status-neutral"
+                                  }`}
+                                >
+                                  {statusText(item.status)}
+                                </span>
+                              </td>
+                              <td className="text-right">
+                                <div className="action-button-group justify-end">
+                                  {item.status === "reported" ? (
+                                    <button
+                                      className="btn btn-secondary btn-sm"
+                                      onClick={() => markUnderReview(item.id)}
+                                      type="button"
+                                    >
+                                      Mark Under Review
+                                    </button>
+                                  ) : (
+                                    <button
+                                      className="btn btn-secondary btn-sm"
+                                      onClick={() => revertStatus(item.id)}
+                                      type="button"
+                                      title="Reset lost report back to reported status"
+                                    >
+                                      Reset to Reported
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="empty-panel-state">
+                      <p>No active lost reports currently in review.</p>
+                    </div>
+                  )}
+                </>
               )}
             </section>
           )}

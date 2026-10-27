@@ -1210,7 +1210,7 @@ app.patch(
     if (!["under_review", "reported"].includes(status))
       return res
         .status(400)
-        .json({ error: "Status must be Under review or Lost." });
+        .json({ error: "Status must be Under review or Reported." });
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
@@ -1241,12 +1241,18 @@ app.patch(
           [lostId, item.item_id],
         );
         await client.query(
-          "UPDATE items SET status = 'under_review' WHERE item_id = $1",
+          "UPDATE items SET status = 'under_review' WHERE item_id = $1 AND matched_found_id IS NULL",
           [lostId],
         );
       } else if (status === "under_review") {
+        if (item.item_type === "found" && item.review_lost_id) {
+          await client.query(
+            "UPDATE items SET status = 'under_review' WHERE item_id = $1 AND matched_found_id IS NULL",
+            [item.review_lost_id],
+          );
+        }
         const result = await client.query(
-          "UPDATE items SET status = 'under_review' WHERE item_id = $1 AND status = 'reported' AND matched_lost_id IS NULL AND matched_found_id IS NULL RETURNING item_id",
+          "UPDATE items SET status = 'under_review' WHERE item_id = $1 AND status IN ('reported', 'under_review') AND matched_lost_id IS NULL AND matched_found_id IS NULL RETURNING item_id",
           [item.item_id],
         );
         if (!result.rows[0]) {
@@ -1266,14 +1272,14 @@ app.patch(
         );
       } else {
         const result = await client.query(
-          "UPDATE items SET status = 'reported' WHERE item_id = $1 AND item_type = 'lost' AND matched_found_id IS NULL RETURNING item_id",
+          "UPDATE items SET status = 'reported' WHERE item_id = $1 AND matched_found_id IS NULL AND matched_lost_id IS NULL RETURNING item_id",
           [item.item_id],
         );
         if (!result.rows[0]) {
           await client.query("ROLLBACK");
           return res
             .status(409)
-            .json({ error: "This report cannot be returned to Lost." });
+            .json({ error: "This report cannot be returned to Reported." });
         }
       }
 

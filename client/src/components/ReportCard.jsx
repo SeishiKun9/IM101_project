@@ -223,6 +223,12 @@ export default function ReportCard({
         </div>
       )}
 
+      {isUnderReview && (
+        <div className="client-report-note notice-info">
+          <strong>Under Review:</strong> {statusMessage("under_review")}
+        </div>
+      )}
+
       {isClosed && (
         <div className="client-report-note notice-success">
           <strong>Outcome:</strong> {statusMessage("completed")}
