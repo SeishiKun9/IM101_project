@@ -40,7 +40,6 @@ export function createProfileRouter({
   safeUser,
   verifyPassword,
   hashPassword,
-  updateSessionsForUser,
   invalidateSessionsForUser,
 }) {
   const router = express.Router();
@@ -147,10 +146,7 @@ export function createProfileRouter({
 
         await client.query("COMMIT");
 
-        // Update active in-memory sessions
         const updatedUser = safeUser(updatedRow);
-        updateSessionsForUser(req.user.id, updatedUser);
-
         res.json(updatedUser);
       } catch (err) {
         await client.query("ROLLBACK");
@@ -251,10 +247,7 @@ export function createProfileRouter({
 
         await client.query("COMMIT");
 
-        // Update active in-memory sessions
         const updatedUser = safeUser(updatedRow);
-        updateSessionsForUser(req.user.id, updatedUser);
-
         res.json(updatedUser);
       } catch (err) {
         await client.query("ROLLBACK");
@@ -339,13 +332,11 @@ export function createProfileRouter({
           { event: "password_changed", timestamp: new Date().toISOString() },
         );
 
+        await invalidateSessionsForUser(req.user.id, client);
         await client.query("COMMIT");
 
         // Clear failed rate limit attempts on success
         clearPasswordAttempts(req.user.id);
-
-        // Invalidate all active sessions for this user
-        invalidateSessionsForUser(req.user.id);
 
         res.json({
           message:

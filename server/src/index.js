@@ -28,7 +28,6 @@ const { Pool } = pg;
 const app = express();
 const port = Number(process.env.PORT || 3000);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const sessions = new Map();
 const adminSetupToken = process.env.ADMIN_SETUP_TOKEN || "";
 
 const isRemoteDb =
@@ -39,6 +38,7 @@ const isRemoteDb =
 const pool = process.env.DATABASE_URL
   ? new Pool({
       connectionString: process.env.DATABASE_URL,
+      max: process.env.VERCEL ? 1 : 10,
       ssl:
         process.env.NODE_ENV === "production" || isRemoteDb
           ? { rejectUnauthorized: false }
@@ -46,10 +46,14 @@ const pool = process.env.DATABASE_URL
     })
   : null;
 
-app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ limit: "50mb", extended: true }));
+const requestBodyLimit = process.env.VERCEL ? "4mb" : "50mb";
+app.use(express.json({ limit: requestBodyLimit }));
+app.use(express.urlencoded({ limit: requestBodyLimit, extended: true }));
 app.use(express.static(path.join(__dirname, "../../client/dist")));
 app.use("/uploads", express.static(path.join(__dirname, "../../uploads")));
+if (process.env.VERCEL) {
+  app.use("/uploads", express.static("/tmp/uploads"));
+}
 
 const itemLocationJoins = `
   JOIN categories c ON c.category_id = i.category_id
@@ -92,11 +96,30 @@ function tokenFrom(req) {
   return header.startsWith("Bearer ") ? header.slice(7) : null;
 }
 function requireAuth(req, res, next) {
-  const user = sessions.get(tokenFrom(req));
-  if (!user)
+  const token = tokenFrom(req);
+  if (!token)
     return res.status(401).json({ error: "Please sign in to continue." });
-  req.user = user;
-  next();
+  if (!pool)
+    return res.status(503).json({ error: "Database is not configured." });
+
+  const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+  pool
+    .query(
+      `SELECT u.user_id, u.username, u.name, u.email, u.role, u.is_active,
+              u.contact_number, u.default_anonymous, u.default_hide_phone,
+              u.theme_preference, u.created_at, u.updated_at
+       FROM user_sessions s
+       JOIN users u ON u.user_id = s.user_id
+       WHERE s.token_hash = $1 AND s.expires_at > now() AND u.is_active = true`,
+      [tokenHash],
+    )
+    .then((result) => {
+      if (!result.rows[0])
+        return res.status(401).json({ error: "Please sign in to continue." });
+      req.user = safeUser(result.rows[0]);
+      next();
+    })
+    .catch(next);
 }
 function requireRole(...roles) {
   return (req, res, next) => {
@@ -137,23 +160,19 @@ function safeUser(row) {
     updatedAt: row.updated_at,
   };
 }
-function updateSessionsForUser(userId, updatedUserData) {
-  for (const [token, sessionUser] of sessions.entries()) {
-    if (String(sessionUser.id) === String(userId)) {
-      sessions.set(token, { ...sessionUser, ...updatedUserData });
-    }
-  }
-}
-function invalidateSessionsForUser(userId) {
-  for (const [token, sessionUser] of sessions.entries()) {
-    if (String(sessionUser.id) === String(userId)) {
-      sessions.delete(token);
-    }
+async function invalidateSessionsForUser(userId, db = pool) {
+  if (db) {
+    await db.query("DELETE FROM user_sessions WHERE user_id = $1", [userId]);
   }
 }
 async function startSession(user) {
   const token = crypto.randomBytes(32).toString("hex");
-  sessions.set(token, safeUser(user));
+  const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+  await pool.query(
+    `INSERT INTO user_sessions (token_hash, user_id, expires_at)
+     VALUES ($1, $2, now() + interval '7 days')`,
+    [tokenHash, user.user_id],
+  );
   return { token, user: safeUser(user) };
 }
 async function findUser(emailOrUsername) {
@@ -255,7 +274,6 @@ app.use(
     safeUser,
     verifyPassword,
     hashPassword,
-    updateSessionsForUser,
     invalidateSessionsForUser,
   }),
 );
@@ -405,10 +423,7 @@ app.post(
       return res
         .status(400)
         .json({ error: "That reset token is invalid or expired." });
-    for (const [sessionToken, sessionUser] of sessions) {
-      if (sessionUser.id === result.rows[0].user_id)
-        sessions.delete(sessionToken);
-    }
+    await invalidateSessionsForUser(result.rows[0].user_id);
     res.json({ message: "Password reset successfully. You can sign in now." });
   }),
 );
@@ -425,7 +440,13 @@ app.post(
         req,
       });
     }
-    sessions.delete(tokenFrom(req));
+    const tokenHash = crypto
+      .createHash("sha256")
+      .update(tokenFrom(req))
+      .digest("hex");
+    await pool.query("DELETE FROM user_sessions WHERE token_hash = $1", [
+      tokenHash,
+    ]);
     res.status(204).end();
   }),
 );
@@ -435,12 +456,10 @@ app.get(
   requireAuth,
   asyncRoute(async (req, res) => {
     const userRow = await findUserById(req.user.id);
-    if (!userRow) {
-      sessions.delete(tokenFrom(req));
+    if (!userRow || userRow.is_active === false) {
       return res.status(401).json({ error: "User no longer exists." });
     }
     const fresh = safeUser(userRow);
-    sessions.set(tokenFrom(req), fresh);
     res.json({ user: fresh });
   }),
 );
@@ -1511,7 +1530,7 @@ app.patch(
       );
 
       if (!isActive) {
-        invalidateSessionsForUser(req.params.userId);
+        await invalidateSessionsForUser(req.params.userId, client);
       }
 
       const actionLabel = isActive ? "REACTIVATE" : "DEACTIVATE";
@@ -1598,12 +1617,7 @@ app.put(
       );
 
       if (!targetActive) {
-        invalidateSessionsForUser(req.params.userId);
-      } else {
-        updateSessionsForUser(req.params.userId, {
-          name: name.trim(),
-          email: normalizedEmail,
-        });
+        await invalidateSessionsForUser(req.params.userId, client);
       }
 
       await logAudit(client, {
@@ -1676,8 +1690,6 @@ app.delete(
         await client.query("ROLLBACK");
         return res.status(404).json({ error: "User account not found." });
       }
-
-      invalidateSessionsForUser(req.params.userId);
 
       const roleLabel =
         targetUser.role === "staff"
@@ -1787,28 +1799,33 @@ app.get("*", (req, res) =>
   res.sendFile(path.join(__dirname, "../../client/index.html")),
 );
 
-async function startServer() {
+export async function initializeServer() {
   if (pool) {
     console.log("Checking and applying database migrations on startup...");
     await runMigrations(pool);
     console.log("Database migrations ready.");
   }
+}
 
+async function startServer() {
+  await initializeServer();
   app.listen(port, () =>
     console.log(`Campus Lost & Found running at http://localhost:${port}`),
   );
 }
 
-startServer().catch(async (err) => {
-  console.error("Server startup failed:", err);
-  if (pool) {
-    try {
-      await pool.end();
-    } catch (closeError) {
-      console.error("Failed to close database pool:", closeError);
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  startServer().catch(async (err) => {
+    console.error("Server startup failed:", err);
+    if (pool) {
+      try {
+        await pool.end();
+      } catch (closeError) {
+        console.error("Failed to close database pool:", closeError);
+      }
     }
-  }
-  process.exitCode = 1;
-});
+    process.exitCode = 1;
+  });
+}
 
 export { app, pool };

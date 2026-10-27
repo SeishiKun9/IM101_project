@@ -11,7 +11,9 @@ import { logUpdate, logFailure, setAuditContext } from "../services/audit.js";
 import { validateAndSaveImage } from "../services/image.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const uploadsDir = path.resolve(__dirname, "../../../uploads/logo");
+const uploadsDir = process.env.VERCEL
+  ? path.join("/tmp", "uploads", "logo")
+  : path.resolve(__dirname, "../../../uploads/logo");
 
 export function createCampusLogoRouter({
   pool,

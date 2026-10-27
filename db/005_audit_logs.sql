@@ -116,6 +116,16 @@ INSERT INTO campus_logo (logo_id, logo_name, image_path, created_at, updated_at)
 VALUES (1, 'Campus Main Logo', '/assets/img/campus-logo.svg', now(), now())
 ON CONFLICT (logo_id) DO NOTHING;
 
+CREATE TABLE IF NOT EXISTS user_sessions (
+  token_hash CHAR(64) PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_expires_at ON user_sessions(expires_at);
+
 -- 6. Comprehensive Overview Views for Activity Dashboard & Reports
 
 -- Master Lifetime & Metric Overview

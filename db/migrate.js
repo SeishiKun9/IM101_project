@@ -115,6 +115,16 @@ export async function runMigrations(customPool = null) {
       }
       await client.query(fs.readFileSync(sql001Path, "utf8"));
     }
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS user_sessions (
+        token_hash CHAR(64) PRIMARY KEY,
+        user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+        expires_at TIMESTAMPTZ NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id);
+      CREATE INDEX IF NOT EXISTS idx_user_sessions_expires_at ON user_sessions(expires_at);
+    `);
 
     // 1. CRITICAL: Ensure audit_logs table and ALL columns exist unconditionally
     try {

@@ -6,7 +6,9 @@ import { logAdminAudit, setAuditContext } from "../services/audit.js";
 import { validateAndSaveImage } from "../services/image.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const uploadsDir = path.resolve(__dirname, "../../../uploads/maps");
+const uploadsDir = process.env.VERCEL
+  ? path.join("/tmp", "uploads", "maps")
+  : path.resolve(__dirname, "../../../uploads/maps");
 
 export function createAdminMapsRouter({
   pool,

@@ -3,14 +3,15 @@
   "installCommand": "npm ci --include=dev",
   "buildCommand": "npm run build",
   "outputDirectory": "client/dist",
+  "functions": {
+    "api/index.js": {
+      "includeFiles": "{db/*.sql,uploads/**}"
+    }
+  },
   "rewrites": [
     {
-      "source": "/api/:path*",
-      "destination": "https://im101-project-api.onrender.com/api/:path*"
-    },
-    {
-      "source": "/uploads/:path*",
-      "destination": "https://im101-project-api.onrender.com/uploads/:path*"
+      "source": "/api/:__api_path*",
+      "destination": "/api/index"
     }
   ]
 }

@@ -22,13 +22,13 @@ The interface includes a static preview when the database is not configured. API
 
 Public registration creates Client accounts. Administrator registration is accepted only with the server-side setup token. Verifier / CSA accounts can only be created by an authenticated Administrator from the Administrator dashboard; the backend rejects direct requests from other roles.
 
-## Deploy to Render and Vercel
+## Deploy to Vercel
 
-1. In Render, create a Blueprint from this repository and use the included `render.yaml`. Set the prompted `ADMIN_SETUP_TOKEN` to a long random secret.
-2. Wait for the Render API and PostgreSQL services to become healthy. The included free PostgreSQL plan is temporary and expires after 30 days.
-3. Import the same repository into Vercel from its root and deploy. `vercel.json` sends `/api` and `/uploads` requests to the Render API service.
+1. Import this repository into Vercel with the repository root as the project root.
+2. Add `DATABASE_URL` and a long random `ADMIN_SETUP_TOKEN` to the Production environment variables. Do not commit these secrets.
+3. Deploy. Vercel builds the Vite frontend from `client/` and routes `/api/*` to the Express serverless function. The function applies database migrations during initialization.
 
-Uploads currently use the Render service's local filesystem. Uploaded images and maps can be lost when the service restarts or redeploys; configure persistent storage before relying on them in production.
+Authentication sessions are stored as hashed tokens in PostgreSQL so they work across serverless instances. Uploaded images and maps are written to Vercel's temporary `/tmp` storage and can disappear when a function instance is recycled. Vercel's function request-size limit also means image uploads must stay below 4 MB; use durable object storage before relying on uploads in production.
 
 ## Team workflow
 
