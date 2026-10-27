@@ -135,6 +135,34 @@ export default function ReviewWorkspace({ user, onChanged }) {
     }
   }
 
+  async function exportReportsCsv() {
+    try {
+      const token = localStorage.getItem("campusToken");
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+      const response = await fetch("/api/admin/export/reports-csv", {
+        credentials: "same-origin",
+        headers,
+      });
+
+      if (!response.ok) {
+        throw new Error("Could not generate reports CSV export.");
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `campus-reports-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err.message || "Failed to download reports CSV.");
+    }
+  }
+
   const roleTitle = roleNames[user?.role] || "Staff";
   const isAdmin = user?.role === "admin";
 
@@ -303,6 +331,14 @@ export default function ReviewWorkspace({ user, onChanged }) {
             <span className="user-name">{user?.name}</span>
             <span className="user-email">{user?.email}</span>
           </div>
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={exportReportsCsv}
+            type="button"
+            title="Download full lost & found registry as CSV spreadsheet"
+          >
+            📥 Export Reports CSV
+          </button>
           <button
             className="btn btn-secondary btn-sm"
             onClick={refresh}
@@ -731,9 +767,19 @@ export default function ReviewWorkspace({ user, onChanged }) {
                     items across campus.
                   </p>
                 </div>
-                <span className="panel-counter">
-                  {queue.cases.length} case{queue.cases.length === 1 ? "" : "s"}
-                </span>
+                <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    onClick={exportReportsCsv}
+                    type="button"
+                    title="Export complete reports registry as CSV spreadsheet"
+                  >
+                    📥 Export Registry CSV
+                  </button>
+                  <span className="panel-counter">
+                    {queue.cases.length} case{queue.cases.length === 1 ? "" : "s"}
+                  </span>
+                </div>
               </div>
 
               {queue.cases.length ? (

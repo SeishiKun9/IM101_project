@@ -33,7 +33,53 @@ export function createAdminAuditRouter({
     }),
   );
 
-  // 2. GET /api/admin/audit-logs (paginated and filtered list)
+  // 2. GET /api/admin/audit-logs/export/csv (export matching audit logs to CSV)
+  router.get(
+    "/export/csv",
+    asyncRoute(async (req, res) => {
+      const result = await getAuditLogs(pool, { ...req.query, page: 1, limit: 10000 });
+      const logs = result.logs || [];
+
+      const headers = [
+        "Audit ID",
+        "Timestamp",
+        "Action",
+        "Status",
+        "Entity Type",
+        "Entity ID",
+        "Actor Username",
+        "Actor Role",
+        "IP Address",
+        "Description",
+      ];
+
+      function escapeCsv(val) {
+        if (val === null || val === undefined) return '""';
+        return `"${String(val).replace(/"/g, '""')}"`;
+      }
+
+      const rows = logs.map((log) => [
+        escapeCsv(log.id),
+        escapeCsv(log.createdAt),
+        escapeCsv(log.action),
+        escapeCsv(log.status),
+        escapeCsv(log.entityType),
+        escapeCsv(log.entityId),
+        escapeCsv(log.actorUsername),
+        escapeCsv(log.actorRole),
+        escapeCsv(log.ipAddress),
+        escapeCsv(log.description),
+      ]);
+
+      const csvContent = [headers.join(","), ...rows.map((r) => r.join(","))].join("\r\n");
+      const filename = `audit-logs-${new Date().toISOString().slice(0, 10)}.csv`;
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.send(csvContent);
+    }),
+  );
+
+  // 3. GET /api/admin/audit-logs (paginated and filtered list)
   router.get(
     "/",
     asyncRoute(async (req, res) => {

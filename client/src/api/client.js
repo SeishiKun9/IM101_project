@@ -10,7 +10,11 @@ export async function apiRequest(path, options = {}) {
 
   let response;
   try {
-    response = await fetch(`/api${path}`, { ...options, headers });
+    response = await fetch(`/api${path}`, {
+      credentials: "same-origin",
+      ...options,
+      headers,
+    });
   } catch (error) {
     throw new Error(
       "Cannot connect to Campus Lost & Found. Check that the backend is running on the same URL.",

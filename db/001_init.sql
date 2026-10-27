@@ -36,6 +36,17 @@ CREATE TABLE users (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE user_sessions (
+  session_token VARCHAR(128) PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES users (user_id) ON DELETE CASCADE,
+  user_data JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ NOT NULL DEFAULT (now() + INTERVAL '7 days')
+);
+
+CREATE INDEX idx_user_sessions_user_id ON user_sessions (user_id);
+CREATE INDEX idx_user_sessions_expires_at ON user_sessions (expires_at);
+
 CREATE TABLE categories (
   category_id BIGSERIAL PRIMARY KEY,
   category_name VARCHAR(80) UNIQUE NOT NULL,

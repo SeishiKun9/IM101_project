@@ -1,5 +1,6 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { formatLocation, normalizeCoord } from "../../utils/location.js";
+import { calculateMatchScore } from "../../utils/matchScorer.js";
 
 export default function CompareModal({
   selected,
@@ -11,6 +12,21 @@ export default function CompareModal({
   onReviewStatus,
 }) {
   if (!selected) return null;
+
+  const scoredCandidates = useMemo(() => {
+    if (!selected || !queueLost.length) return [];
+    return queueLost
+      .map((lost) => ({
+        lost,
+        match: calculateMatchScore(lost, selected),
+      }))
+      .sort((a, b) => b.match.score - a.match.score);
+  }, [selected, queueLost]);
+
+  const currentMatch = useMemo(() => {
+    if (!selectedLost || !selected) return null;
+    return calculateMatchScore(selectedLost, selected);
+  }, [selectedLost, selected]);
 
   function renderReportSide(report, label, type) {
     return (
@@ -192,16 +208,68 @@ export default function CompareModal({
               }}
             >
               <option value="">
-                -- Choose a matching lost report candidate --
+                -- Choose a matching lost report candidate ({scoredCandidates.length} available) --
               </option>
-              {queueLost.map((lost) => (
+              {scoredCandidates.map(({ lost, match }) => (
                 <option key={lost.id} value={lost.id}>
-                  #{lost.id} - {lost.title} ({lost.date} ·{" "}
-                  {formatLocation(lost)})
+                  [{match.score}% {match.confidence.toUpperCase()}] #{lost.id} - {lost.title} ({lost.date} · {formatLocation(lost)})
                 </option>
               ))}
             </select>
           </div>
+
+          {selectedLost && currentMatch && (
+            <div
+              className={`match-confidence-banner confidence-${currentMatch.confidence}`}
+              style={{
+                padding: "10px 14px",
+                borderRadius: "8px",
+                margin: "12px 0",
+                display: "flex",
+                flexDirection: "column",
+                gap: "4px",
+                background:
+                  currentMatch.confidence === "high"
+                    ? "rgba(16, 185, 129, 0.12)"
+                    : currentMatch.confidence === "medium"
+                      ? "rgba(59, 130, 246, 0.12)"
+                      : "rgba(245, 158, 11, 0.12)",
+                border: `1px solid ${
+                  currentMatch.confidence === "high"
+                    ? "rgba(16, 185, 129, 0.35)"
+                    : currentMatch.confidence === "medium"
+                      ? "rgba(59, 130, 246, 0.35)"
+                      : "rgba(245, 158, 11, 0.35)"
+                }`,
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <strong>
+                  Automated Match Confidence: {currentMatch.score}% ({currentMatch.confidence.toUpperCase()})
+                </strong>
+                <span
+                  className={`status-badge ${
+                    currentMatch.confidence === "high"
+                      ? "status-success"
+                      : currentMatch.confidence === "medium"
+                        ? "status-blue"
+                        : "status-amber"
+                  }`}
+                >
+                  {currentMatch.confidence === "high"
+                    ? "High Probability"
+                    : currentMatch.confidence === "medium"
+                      ? "Likely Candidate"
+                      : "Low Similarity"}
+                </span>
+              </div>
+              {currentMatch.reasons.length > 0 && (
+                <small style={{ color: "var(--text-muted)", marginTop: "2px" }}>
+                  Key match factors: {currentMatch.reasons.join(" • ")}
+                </small>
+              )}
+            </div>
+          )}
 
           {selectedLost && (
             <div className="intermediate-actions-row">

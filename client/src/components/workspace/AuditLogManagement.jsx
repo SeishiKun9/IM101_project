@@ -97,6 +97,43 @@ export default function AuditLogManagement() {
     setSortOrder("DESC");
   }
 
+  async function exportCsv() {
+    try {
+      const queryParams = new URLSearchParams();
+      if (search.trim()) queryParams.set("search", search.trim());
+      if (roleFilter) queryParams.set("role", roleFilter);
+      if (actionFilter) queryParams.set("action", actionFilter);
+      if (statusFilter) queryParams.set("status", statusFilter);
+      if (entityFilter) queryParams.set("entity_type", entityFilter);
+      if (startDate) queryParams.set("start_date", startDate);
+      if (endDate) queryParams.set("end_date", endDate);
+
+      const token = localStorage.getItem("campusToken");
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+      const response = await fetch(`/api/admin/audit-logs/export/csv?${queryParams.toString()}`, {
+        credentials: "same-origin",
+        headers,
+      });
+
+      if (!response.ok) {
+        throw new Error("Could not generate CSV export.");
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `audit-logs-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   async function handleRecover(log) {
     if (!log) return;
     const entity = log.entity_type || log.entityType || "record";
@@ -186,6 +223,14 @@ export default function AuditLogManagement() {
           </p>
         </div>
         <div className="audit-header-actions">
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={exportCsv}
+            type="button"
+            title="Download full matching audit ledger as CSV"
+          >
+            📥 Export CSV
+          </button>
           <button
             className="btn btn-secondary btn-sm"
             onClick={() => setShowOverviewDetails((prev) => !prev)}

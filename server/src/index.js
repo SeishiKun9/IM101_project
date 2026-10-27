@@ -30,6 +30,7 @@ import {
   validatePassword,
   validateSchoolEmail,
 } from "./utils/validation.js";
+import { calculateMatchScore } from "./utils/matchScorer.js";
 
 const { Pool } = pg;
 const app = express();
@@ -52,6 +53,18 @@ const pool = process.env.DATABASE_URL
           : false,
     })
   : null;
+
+// Configure reverse proxy trust (Render HTTPS)
+app.set("trust proxy", 1);
+
+// Security Headers (nosniff, frame protection, XSS filter, referrer policy)
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "SAMEORIGIN");
+  res.setHeader("X-XSS-Protection", "1; mode=block");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  next();
+});
 
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
@@ -94,17 +107,142 @@ function requireDatabase(req, res, next) {
     return res.status(503).json({ error: "Database is not configured." });
   next();
 }
+// Rate limiter store for sensitive authentication endpoints (Item 2B)
+const rateLimitStore = new Map();
+
+function createRateLimiter({
+  windowMs = 15 * 60 * 1000,
+  max = 10,
+  message = "Too many attempts from this IP. Please wait a few minutes before trying again.",
+} = {}) {
+  // Periodically sweep expired entries (every 10 minutes)
+  setInterval(() => {
+    const now = Date.now();
+    for (const [key, record] of rateLimitStore.entries()) {
+      if (now > record.resetTime) {
+        rateLimitStore.delete(key);
+      }
+    }
+  }, 10 * 60 * 1000).unref();
+
+  return (req, res, next) => {
+    const ip =
+      req.ip ||
+      req.headers["x-forwarded-for"] ||
+      req.socket.remoteAddress ||
+      "client";
+    const key = `${req.baseUrl || ""}${req.path}:${ip}`;
+    const now = Date.now();
+
+    let record = rateLimitStore.get(key);
+    if (!record || now > record.resetTime) {
+      record = { count: 1, resetTime: now + windowMs };
+      rateLimitStore.set(key, record);
+      return next();
+    }
+
+    record.count += 1;
+    if (record.count > max) {
+      const retryAfterSec = Math.ceil((record.resetTime - now) / 1000);
+      res.setHeader("Retry-After", retryAfterSec);
+      return res.status(429).json({
+        error: message,
+        retryAfterSeconds: retryAfterSec,
+      });
+    }
+
+    next();
+  };
+}
+
+const authRateLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message:
+    "Too many authentication attempts. Please wait 15 minutes before trying again.",
+});
+
+// Cookie parsing helper (Item 5)
+function parseCookies(cookieHeader) {
+  const cookies = {};
+  if (!cookieHeader) return cookies;
+  for (const pair of cookieHeader.split(";")) {
+    const [name, ...val] = pair.split("=");
+    const cleanName = name ? name.trim() : null;
+    if (cleanName) {
+      cookies[cleanName] = decodeURIComponent(val.join("=").trim());
+    }
+  }
+  return cookies;
+}
+
 function tokenFrom(req) {
   const header = req.get("authorization") || "";
-  return header.startsWith("Bearer ") ? header.slice(7) : null;
+  if (header.startsWith("Bearer ")) {
+    return header.slice(7).trim();
+  }
+  const cookies = parseCookies(req.get("cookie"));
+  if (cookies.campus_session) {
+    return cookies.campus_session;
+  }
+  return null;
 }
-function requireAuth(req, res, next) {
-  const user = sessions.get(tokenFrom(req));
-  if (!user)
+
+// Image Data URI Sanitization (Item 4)
+function isValidImageDataUri(dataUri) {
+  if (!dataUri || typeof dataUri !== "string") return false;
+  const trimmed = dataUri.trim();
+  if (trimmed.startsWith("/uploads/") || trimmed.startsWith("/assets/"))
+    return true;
+  return /^data:image\/(png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(
+    trimmed,
+  );
+}
+
+// Persistent Database-Backed Sessions (Item 1 & 2A)
+async function getSession(token) {
+  if (!token) return null;
+  const cached = sessions.get(token);
+  if (cached) return cached;
+
+  if (pool) {
+    try {
+      const res = await pool.query(
+        "SELECT user_data, expires_at FROM user_sessions WHERE session_token = $1",
+        [token],
+      );
+      if (res.rows.length > 0) {
+        const row = res.rows[0];
+        if (new Date(row.expires_at) > new Date()) {
+          sessions.set(token, row.user_data);
+          return row.user_data;
+        } else {
+          await pool.query(
+            "DELETE FROM user_sessions WHERE session_token = $1",
+            [token],
+          );
+        }
+      }
+    } catch (e) {
+      console.warn("Session DB lookup warning:", e.message);
+    }
+  }
+  return null;
+}
+
+async function requireAuth(req, res, next) {
+  const token = tokenFrom(req);
+  if (!token) {
     return res.status(401).json({ error: "Please sign in to continue." });
+  }
+  const user = await getSession(token);
+  if (!user) {
+    return res.status(401).json({ error: "Please sign in to continue." });
+  }
   req.user = user;
   next();
 }
+
 function requireRole(...roles) {
   return (req, res, next) => {
     if (!roles.includes(req.user.role))
@@ -114,11 +252,13 @@ function requireRole(...roles) {
     next();
   };
 }
+
 function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString("hex");
   const hash = crypto.scryptSync(password, salt, 64).toString("hex");
   return `scrypt:${salt}:${hash}`;
 }
+
 function verifyPassword(password, stored) {
   const [, salt, expected] = String(stored).split(":");
   if (!salt || !expected) return false;
@@ -128,6 +268,7 @@ function verifyPassword(password, stored) {
     Buffer.from(expected, "hex"),
   );
 }
+
 function safeUser(row) {
   return {
     id: String(row.user_id),
@@ -144,24 +285,69 @@ function safeUser(row) {
     updatedAt: row.updated_at,
   };
 }
-function updateSessionsForUser(userId, updatedUserData) {
+
+async function updateSessionsForUser(userId, updatedUserData) {
   for (const [token, sessionUser] of sessions.entries()) {
     if (String(sessionUser.id) === String(userId)) {
-      sessions.set(token, { ...sessionUser, ...updatedUserData });
+      const merged = { ...sessionUser, ...updatedUserData };
+      sessions.set(token, merged);
+      if (pool) {
+        pool
+          .query(
+            "UPDATE user_sessions SET user_data = $1 WHERE session_token = $2",
+            [JSON.stringify(merged), token],
+          )
+          .catch(() => {});
+      }
     }
   }
 }
-function invalidateSessionsForUser(userId) {
+
+async function invalidateSessionsForUser(userId) {
   for (const [token, sessionUser] of sessions.entries()) {
     if (String(sessionUser.id) === String(userId)) {
       sessions.delete(token);
     }
   }
+  if (pool) {
+    try {
+      await pool.query("DELETE FROM user_sessions WHERE user_id = $1", [
+        userId,
+      ]);
+    } catch (e) {
+      console.warn("Error invalidating DB sessions:", e.message);
+    }
+  }
 }
-async function startSession(user) {
+
+async function startSession(user, res = null) {
   const token = crypto.randomBytes(32).toString("hex");
-  sessions.set(token, safeUser(user));
-  return { token, user: safeUser(user) };
+  const userData = safeUser(user);
+  sessions.set(token, userData);
+
+  if (pool) {
+    try {
+      await pool.query(
+        `INSERT INTO user_sessions (session_token, user_id, user_data, created_at, expires_at)
+         VALUES ($1, $2, $3, now(), now() + INTERVAL '7 days')`,
+        [token, user.user_id || user.id, JSON.stringify(userData)],
+      );
+    } catch (e) {
+      console.warn("Error persisting session to DB:", e.message);
+    }
+  }
+
+  if (res && res.cookie) {
+    res.cookie("campus_session", token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production" || isRemoteDb,
+      sameSite: "lax",
+      path: "/",
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    });
+  }
+
+  return { token, user: userData };
 }
 async function findUser(emailOrUsername) {
   const clean = String(emailOrUsername || "").trim();
@@ -269,6 +455,7 @@ app.use(
 
 app.post(
   "/api/auth/register",
+  authRateLimiter,
   requireDatabase,
   asyncRoute(async (req, res) => {
     const {
@@ -319,7 +506,7 @@ app.post(
         "INSERT INTO users (name, email, username, password_hash, role) VALUES ($1, $2, $3, $4, $5) RETURNING user_id, name, email, username, password_hash, role",
         [formattedName, normalizedEmail, username, hashPassword(password), role],
       );
-      res.status(201).json(await startSession(result.rows[0]));
+      res.status(201).json(await startSession(result.rows[0], res));
     } catch (error) {
       if (error.code === "23505") {
         if (error.constraint === "users_username_unique") {
@@ -336,6 +523,7 @@ app.post(
 
 app.post(
   "/api/auth/login",
+  authRateLimiter,
   requireDatabase,
   asyncRoute(async (req, res) => {
     const emailOrUsername = String(req.body.email || "")
@@ -370,7 +558,7 @@ app.post(
         .json({ error: "This account has been deactivated. Please contact an administrator." });
     }
 
-    const session = await startSession(user);
+    const session = await startSession(user, res);
     await logAuthEvent(pool, {
       actor: session.user,
       action: "LOGIN",
@@ -383,6 +571,7 @@ app.post(
 
 app.post(
   "/api/auth/forgot-password",
+  authRateLimiter,
   requireDatabase,
   asyncRoute(async (req, res) => {
     const email = String(req.body.email || "")
@@ -436,6 +625,9 @@ app.post(
       if (sessionUser.id === result.rows[0].user_id)
         sessions.delete(sessionToken);
     }
+    if (pool) {
+      pool.query("DELETE FROM user_sessions WHERE user_id = $1", [result.rows[0].user_id]).catch(() => {});
+    }
     res.json({ message: "Password reset successfully. You can sign in now." });
   }),
 );
@@ -444,6 +636,7 @@ app.post(
   "/api/auth/logout",
   requireAuth,
   asyncRoute(async (req, res) => {
+    const token = tokenFrom(req);
     if (req.user) {
       await logAuthEvent(pool, {
         actor: req.user,
@@ -452,7 +645,18 @@ app.post(
         req,
       });
     }
-    sessions.delete(tokenFrom(req));
+    if (token) {
+      sessions.delete(token);
+      if (pool) {
+        pool.query("DELETE FROM user_sessions WHERE session_token = $1", [token]).catch(() => {});
+      }
+    }
+    res.clearCookie("campus_session", {
+      path: "/",
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production" || isRemoteDb,
+    });
     res.status(204).end();
   }),
 );
@@ -707,6 +911,12 @@ app.post(
         resolvedMapName = activeMap.name;
         resolvedMapVersion = activeMap.version_number;
       }
+    }
+
+    if (image && !isValidImageDataUri(image)) {
+      return res.status(400).json({
+        error: "Invalid image format. Supported formats: JPEG, PNG, WebP, GIF.",
+      });
     }
 
     if (itemType === "found") {
@@ -1417,6 +1627,104 @@ app.post(
     });
 
     res.json({ ok: true });
+  }),
+);
+
+// Full CSV export for reports registry (Item 2F)
+app.get(
+  "/api/admin/export/reports-csv",
+  requireDatabase,
+  requireAuth,
+  requireRole("staff", "admin"),
+  asyncRoute(async (req, res) => {
+    const values = [];
+    const where = [];
+    if (req.query.type && ["lost", "found"].includes(req.query.type)) {
+      values.push(req.query.type);
+      where.push(`i.item_type = $${values.length}`);
+    }
+    if (req.query.status && req.query.status !== "all") {
+      values.push(req.query.status);
+      where.push(`i.status = $${values.length}`);
+    }
+    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
+    const result = await pool.query(
+      `SELECT
+         i.item_id,
+         i.item_type,
+         i.title,
+         i.description,
+         c.category_name,
+         i.status,
+         i.date_reported,
+         COALESCE(b.name, i.location_snapshot->>'buildingName', l.building, 'Campus Area') AS building_name,
+         COALESCE(f.name, i.location_snapshot->>'floorName', l.floor, 'All floors') AS floor_name,
+         COALESCE(r.name, i.location_description, i.location_snapshot->>'roomName', l.location_name, 'General Area') AS room_name,
+         CASE WHEN i.is_anonymous THEN 'Anonymous' ELSE COALESCE(i.reporter_name, 'Unknown') END AS reporter,
+         i.contact_phone,
+         i.matched_lost_id,
+         i.matched_found_id,
+         i.created_at
+       FROM items i
+       ${itemLocationJoins}
+       ${whereSql}
+       ORDER BY i.item_id DESC`,
+      values,
+    );
+
+    function escapeCsv(val) {
+      if (val === null || val === undefined) return '""';
+      const str = String(val).replace(/"/g, '""');
+      return `"${str}"`;
+    }
+
+    const headers = [
+      "Item ID",
+      "Type",
+      "Title",
+      "Category",
+      "Status",
+      "Date Reported",
+      "Building",
+      "Floor",
+      "Room/Location",
+      "Reporter",
+      "Contact Phone",
+      "Matched Lost ID",
+      "Matched Found ID",
+      "Created At",
+    ];
+
+    const lines = [headers.join(",")];
+    for (const row of result.rows) {
+      lines.push(
+        [
+          row.item_id,
+          escapeCsv(row.item_type),
+          escapeCsv(row.title),
+          escapeCsv(row.category_name),
+          escapeCsv(row.status),
+          escapeCsv(row.date_reported ? new Date(row.date_reported).toISOString().slice(0, 10) : ""),
+          escapeCsv(row.building_name),
+          escapeCsv(row.floor_name),
+          escapeCsv(row.room_name),
+          escapeCsv(row.reporter),
+          escapeCsv(row.contact_phone),
+          row.matched_lost_id || "",
+          row.matched_found_id || "",
+          escapeCsv(row.created_at ? new Date(row.created_at).toISOString() : ""),
+        ].join(","),
+      );
+    }
+
+    const csvOutput = "\uFEFF" + lines.join("\r\n");
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="campus_registry_reports_${new Date().toISOString().slice(0, 10)}.csv"`,
+    );
+    res.send(csvOutput);
   }),
 );
 

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { apiRequest } from "../api/client.js";
 import { useAuth } from "../context/AuthContext.jsx";
+import { compressImageFile } from "../utils/imageCompressor.js";
 
 export default function ReportFormModal({
   onClose,
@@ -84,28 +85,13 @@ export default function ReportFormModal({
     (r) => String(r.id) === String(selectedRoomId),
   );
 
-  function readImage(file) {
-    if (!file || !file.size) return Promise.resolve("");
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onerror = reject;
-      reader.onload = () => {
-        const image = new Image();
-        image.onerror = reject;
-        image.onload = () => {
-          const scale = Math.min(1, 1280 / Math.max(image.width, image.height));
-          const canvas = document.createElement("canvas");
-          canvas.width = Math.max(1, Math.round(image.width * scale));
-          canvas.height = Math.max(1, Math.round(image.height * scale));
-          canvas
-            .getContext("2d")
-            .drawImage(image, 0, 0, canvas.width, canvas.height);
-          resolve(canvas.toDataURL("image/jpeg", 0.76));
-        };
-        image.src = reader.result;
-      };
-      reader.readAsDataURL(file);
+  async function readImage(file) {
+    if (!file || !file.size) return "";
+    const result = await compressImageFile(file, {
+      maxDimension: 1280,
+      quality: 0.78,
     });
+    return result.dataUrl;
   }
 
   function handleMapClick(event) {
@@ -122,10 +108,19 @@ export default function ReportFormModal({
     setPin({ x: x.toFixed(2), y: y.toFixed(2) });
   }
 
-  function handleFileChange(event) {
+  async function handleFileChange(event) {
     const file = event.target.files?.[0];
     if (file) {
-      setImagePreview(URL.createObjectURL(file));
+      try {
+        setError("");
+        const compressed = await compressImageFile(file, {
+          maxDimension: 1280,
+          quality: 0.78,
+        });
+        setImagePreview(compressed.dataUrl);
+      } catch (err) {
+        setError(err.message || "Failed to process photo.");
+      }
     }
   }
 

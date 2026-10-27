@@ -210,6 +210,24 @@ export async function runMigrations(customPool = null) {
       console.error("Error setting up campus_logo:", logoErr.message);
     }
 
+    // Ensure user_sessions table exists (persistent sessions)
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS user_sessions (
+          session_token VARCHAR(128) PRIMARY KEY,
+          user_id BIGINT REFERENCES users(user_id) ON DELETE CASCADE,
+          user_data JSONB NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          expires_at TIMESTAMPTZ NOT NULL DEFAULT now() + INTERVAL '7 days'
+        );
+        CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id);
+        CREATE INDEX IF NOT EXISTS idx_user_sessions_expires_at ON user_sessions(expires_at);
+      `);
+      console.log("user_sessions table verified successfully.");
+    } catch (sessionErr) {
+      console.error("Error setting up user_sessions table:", sessionErr.message);
+    }
+
     // Ensure default categories exist
     try {
       const defaultCategories = [
