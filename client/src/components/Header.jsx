@@ -5,6 +5,7 @@ import { roleNames } from "../constants/statuses.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import UserMenu, { getInitials } from "./UserMenu.jsx";
 import ThemeSelector, { GuestThemeToggle } from "./ThemeSelector.jsx";
+import NotificationBell from "./NotificationBell.jsx";
 
 export default function Header({ onAuth }) {
   const { user, logout } = useAuth();
@@ -180,7 +181,10 @@ export default function Header({ onAuth }) {
         {/* Right side: User dropdown or Guest Theme + Sign in */}
         <div className="topbar-actions">
           {user ? (
-            <UserMenu onNavigate={closeMobile} />
+            <>
+              <NotificationBell onNavigate={closeMobile} />
+              <UserMenu onNavigate={closeMobile} />
+            </>
           ) : (
             <div className="guest-header-actions">
               <GuestThemeToggle />

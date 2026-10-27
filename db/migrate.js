@@ -228,6 +228,27 @@ export async function runMigrations(customPool = null) {
       console.error("Error setting up user_sessions table:", sessionErr.message);
     }
 
+    // Ensure notifications table exists
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS notifications (
+          notification_id BIGSERIAL PRIMARY KEY,
+          user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+          title VARCHAR(150) NOT NULL,
+          message TEXT NOT NULL,
+          type VARCHAR(50) NOT NULL DEFAULT 'match_alert',
+          link VARCHAR(255),
+          item_id BIGINT REFERENCES items(item_id) ON DELETE CASCADE,
+          is_read BOOLEAN NOT NULL DEFAULT false,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, is_read, created_at DESC);
+      `);
+      console.log("notifications table verified successfully.");
+    } catch (notifErr) {
+      console.error("Error setting up notifications table:", notifErr.message);
+    }
+
     // Ensure default categories exist
     try {
       const defaultCategories = [

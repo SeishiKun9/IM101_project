@@ -47,6 +47,20 @@ CREATE TABLE user_sessions (
 CREATE INDEX idx_user_sessions_user_id ON user_sessions (user_id);
 CREATE INDEX idx_user_sessions_expires_at ON user_sessions (expires_at);
 
+CREATE TABLE notifications (
+  notification_id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES users (user_id) ON DELETE CASCADE,
+  title VARCHAR(150) NOT NULL,
+  message TEXT NOT NULL,
+  type VARCHAR(50) NOT NULL DEFAULT 'match_alert',
+  link VARCHAR(255),
+  item_id BIGINT,
+  is_read BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_notifications_user ON notifications (user_id, is_read, created_at DESC);
+
 CREATE TABLE categories (
   category_id BIGSERIAL PRIMARY KEY,
   category_name VARCHAR(80) UNIQUE NOT NULL,

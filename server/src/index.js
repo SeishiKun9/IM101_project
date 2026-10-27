@@ -199,6 +199,23 @@ function isValidImageDataUri(dataUri) {
   );
 }
 
+// Notification Creation Helper (Item 3 & 4)
+async function createNotification(
+  dbClient,
+  { userId, title, message, type = "match_alert", link = null, itemId = null },
+) {
+  if (!dbClient || !userId) return;
+  try {
+    await dbClient.query(
+      `INSERT INTO notifications (user_id, title, message, type, link, item_id, is_read, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, false, now())`,
+      [userId, title, message, type, link, itemId],
+    );
+  } catch (err) {
+    console.warn("Notification creation warning:", err.message);
+  }
+}
+
 // Persistent Database-Backed Sessions (Item 1 & 2A)
 async function getSession(token) {
   if (!token) return null;
@@ -721,6 +738,60 @@ app.get(
 );
 
 app.get(
+  "/api/items/:itemId/similar",
+  requireDatabase,
+  asyncRoute(async (req, res) => {
+    const targetQuery = await pool.query(
+      `SELECT i.item_id, i.item_type, i.title, i.description, i.date_reported,
+              c.category_name AS category,
+              COALESCE(b.name, i.location_snapshot->>'buildingName') AS building,
+              COALESCE(r.name, i.location_description, i.location_snapshot->>'roomName') AS location
+       FROM items i
+       JOIN categories c ON c.category_id = i.category_id
+       LEFT JOIN buildings b ON b.building_id = i.building_id
+       LEFT JOIN rooms r ON r.room_id = i.room_id
+       WHERE i.item_id = $1`,
+      [req.params.itemId],
+    );
+
+    if (!targetQuery.rows.length) {
+      return res.status(404).json({ error: "Item not found." });
+    }
+
+    const target = targetQuery.rows[0];
+    const oppositeType = target.item_type === "found" ? "lost" : "found";
+
+    const candidates = await pool.query(
+      `SELECT ${publicItemFields}
+       FROM items i
+       ${itemLocationJoins}
+       WHERE i.item_type = $1 AND i.status IN ('reported', 'under_review', 'found')
+       ORDER BY i.created_at DESC
+       LIMIT 50`,
+      [oppositeType],
+    );
+
+    const scored = candidates.rows
+      .map((cand) => {
+        const lostObj = target.item_type === "lost" ? target : cand;
+        const foundObj = target.item_type === "found" ? target : cand;
+        const match = calculateMatchScore(lostObj, foundObj);
+        return {
+          item: cand,
+          score: match.score,
+          confidence: match.confidence,
+          reasons: match.reasons,
+        };
+      })
+      .filter((s) => s.score >= 30)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 4);
+
+    res.json(scored);
+  }),
+);
+
+app.get(
   "/api/stats",
   requireDatabase,
   asyncRoute(async (req, res) => {
@@ -1031,6 +1102,70 @@ app.post(
         req,
       });
 
+      // Automatic Match Alerts (Item 4)
+      const newItemId = item.rows[0].item_id;
+      const targetOppositeType = itemType === "found" ? "lost" : "found";
+      const candidateReports = await client.query(
+        `SELECT i.item_id, i.reporter_id, i.title, i.description, i.date_reported,
+                c.category_name AS category,
+                COALESCE(b.name, i.location_snapshot->>'buildingName') AS building,
+                COALESCE(r.name, i.location_description, i.location_snapshot->>'roomName') AS location
+         FROM items i
+         JOIN categories c ON c.category_id = i.category_id
+         LEFT JOIN buildings b ON b.building_id = i.building_id
+         LEFT JOIN rooms r ON r.room_id = i.room_id
+         WHERE i.item_type = $1 AND i.status IN ('reported', 'under_review') AND i.reporter_id IS NOT NULL`,
+        [targetOppositeType],
+      );
+
+      const currentReportForScoring = {
+        title: title.trim(),
+        description: description.trim(),
+        category,
+        building: resolvedBuilding?.name || legacyBuilding || null,
+        room: resolvedRoom?.name || legacyRoom || null,
+        date: dateReported,
+      };
+
+      for (const candidate of candidateReports.rows) {
+        const candidateForScoring = {
+          title: candidate.title,
+          description: candidate.description,
+          category: candidate.category,
+          building: candidate.building,
+          room: candidate.location,
+          date: candidate.date_reported,
+        };
+
+        const lostObj = itemType === "found" ? candidateForScoring : currentReportForScoring;
+        const foundObj = itemType === "found" ? currentReportForScoring : candidateForScoring;
+        const matchResult = calculateMatchScore(lostObj, foundObj);
+
+        if (matchResult.score >= 60) {
+          if (itemType === "found") {
+            // Found item reported -> Alert the student who reported the lost item!
+            await createNotification(client, {
+              userId: candidate.reporter_id,
+              title: `Potential Match Detected! (${matchResult.score}%)`,
+              message: `A found item "${title.trim()}" strongly matches your lost report "${candidate.title}".`,
+              type: "match_alert",
+              link: `/?item=${newItemId}`,
+              itemId: newItemId,
+            });
+          } else {
+            // Lost item reported -> Alert the reporter that a matching item was already found!
+            await createNotification(client, {
+              userId: req.user.id,
+              title: `Possible Match Found! (${matchResult.score}%)`,
+              message: `An item matching your description ("${candidate.title}") was already handed in! Check it on the dashboard.`,
+              type: "match_alert",
+              link: `/?item=${candidate.item_id}`,
+              itemId: candidate.item_id,
+            });
+          }
+        }
+      }
+
       await client.query("COMMIT");
       res.status(201).json({ id: item.rows[0].item_id });
     } catch (error) {
@@ -1180,6 +1315,150 @@ app.get(
       [req.user.id],
     );
     res.json(result.rows);
+  }),
+);
+
+// ==========================================
+// Similar Items / Match Recommendations (Item 12)
+// ==========================================
+app.get(
+  "/api/items/:itemId/similar",
+  requireDatabase,
+  asyncRoute(async (req, res) => {
+    const targetRes = await pool.query(
+      `SELECT item_id, item_type, title, description, category, building, location,
+              date_reported, status, matched_lost_id, matched_found_id
+       FROM items
+       WHERE item_id = $1`,
+      [req.params.itemId],
+    );
+
+    const target = targetRes.rows[0];
+    if (!target) {
+      return res.json([]);
+    }
+
+    const oppositeType = target.item_type === "lost" ? "found" : "lost";
+    const candidatesRes = await pool.query(
+      `SELECT item_id AS id, item_type AS type, title, description, category,
+              building, location, date_reported AS date, image_url AS image,
+              status, map_x AS "mapX", map_y AS "mapY"
+       FROM items
+       WHERE item_type = $1
+         AND item_id != $2
+         AND status IN ('reported', 'found', 'under_review')
+         AND (
+           ($1 = 'found' AND matched_lost_id IS NULL) OR
+           ($1 = 'lost' AND matched_found_id IS NULL)
+         )
+       ORDER BY created_at DESC
+       LIMIT 60`,
+      [oppositeType, target.item_id],
+    );
+
+    const targetForScoring = {
+      title: target.title,
+      description: target.description,
+      category: target.category,
+      building: target.building,
+      room: target.location,
+      date: target.date_reported,
+    };
+
+    const scored = [];
+    for (const cand of candidatesRes.rows) {
+      const candForScoring = {
+        title: cand.title,
+        description: cand.description,
+        category: cand.category,
+        building: cand.building,
+        room: cand.location,
+        date: cand.date,
+      };
+
+      const lostObj = target.item_type === "lost" ? targetForScoring : candForScoring;
+      const foundObj = target.item_type === "found" ? targetForScoring : candForScoring;
+      const match = calculateMatchScore(lostObj, foundObj);
+
+      if (match.score >= 35) {
+        scored.push({
+          ...cand,
+          score: match.score,
+          confidence: match.confidence,
+          reasons: match.reasons,
+        });
+      }
+    }
+
+    scored.sort((a, b) => b.score - a.score);
+    res.json(scored.slice(0, 4));
+  }),
+);
+
+// ==========================================
+// In-App Notifications API (Item 3 & 4)
+// ==========================================
+app.get(
+  "/api/notifications",
+  requireDatabase,
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const unreadRes = await pool.query(
+      "SELECT COUNT(*)::int AS count FROM notifications WHERE user_id = $1 AND is_read = false",
+      [req.user.id],
+    );
+    const result = await pool.query(
+      `SELECT notification_id AS id, title, message, type, link,
+              item_id AS "itemId", is_read AS "isRead", created_at AS "createdAt"
+       FROM notifications
+       WHERE user_id = $1
+       ORDER BY created_at DESC
+       LIMIT 50`,
+      [req.user.id],
+    );
+    res.json({
+      notifications: result.rows,
+      unreadCount: unreadRes.rows[0]?.count || 0,
+    });
+  }),
+);
+
+app.patch(
+  "/api/notifications/:id/read",
+  requireDatabase,
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    await pool.query(
+      "UPDATE notifications SET is_read = true WHERE notification_id = $1 AND user_id = $2",
+      [req.params.id, req.user.id],
+    );
+    res.json({ success: true });
+  }),
+);
+
+app.post(
+  "/api/notifications/read-all",
+  requireDatabase,
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    await pool.query(
+      "UPDATE notifications SET is_read = true WHERE user_id = $1 AND is_read = false",
+      [req.user.id],
+    );
+    res.json({ success: true });
+  }),
+);
+
+app.delete(
+  "/api/notifications/:id",
+  requireDatabase,
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    await pool.query(
+      "DELETE FROM notifications WHERE notification_id = $1 AND user_id = $2",
+      [req.params.id, req.user.id],
+    );
+    res.status(204).end();
   }),
 );
 
@@ -1341,11 +1620,11 @@ app.post(
     try {
       await client.query("BEGIN");
       const found = await client.query(
-        "SELECT item_id, title, matched_lost_id FROM items WHERE item_id = $1 AND item_type = 'found' AND matched_lost_id IS NULL FOR UPDATE",
+        "SELECT item_id, title, matched_lost_id, reporter_id FROM items WHERE item_id = $1 AND item_type = 'found' AND matched_lost_id IS NULL FOR UPDATE",
         [req.params.foundId],
       );
       const lost = await client.query(
-        "SELECT item_id, title, matched_found_id FROM items WHERE item_id = $1 AND item_type = 'lost' AND matched_found_id IS NULL FOR UPDATE",
+        "SELECT item_id, title, matched_found_id, reporter_id FROM items WHERE item_id = $1 AND item_type = 'lost' AND matched_found_id IS NULL FOR UPDATE",
         [lostId],
       );
       if (!found.rows[0] || !lost.rows[0])
@@ -1399,6 +1678,17 @@ app.post(
         req,
       });
 
+      if (lost.rows[0]?.reporter_id) {
+        await createNotification(client, {
+          userId: lost.rows[0].reporter_id,
+          title: "Your Lost Item Has Been Found & Verified! 🎉",
+          message: `Great news! "${found.rows[0].title}" was officially verified and matched to your report. You can now request a claim or arrange pickup with CSA.`,
+          type: "item_ready",
+          link: `/?item=${req.params.foundId}`,
+          itemId: req.params.foundId,
+        });
+      }
+
       await client.query("COMMIT");
       res.json({ ok: true, message: "Item found. Please collect it at CSA." });
     } catch (error) {
@@ -1426,7 +1716,7 @@ app.patch(
       await client.query("BEGIN");
       await setAuditContext(client, req.user, req);
       const itemResult = await client.query(
-        "SELECT item_id, title, status, item_type, review_lost_id FROM items WHERE item_id = $1 FOR UPDATE",
+        "SELECT item_id, title, status, item_type, review_lost_id, reporter_id FROM items WHERE item_id = $1 FOR UPDATE",
         [req.params.itemId],
       );
       const item = itemResult.rows[0];
@@ -1437,7 +1727,7 @@ app.patch(
 
       if (status === "under_review" && lostId) {
         const lostResult = await client.query(
-          "SELECT item_id, title FROM items WHERE item_id = $1 AND item_type = 'lost' AND status IN ('reported', 'under_review') AND matched_found_id IS NULL FOR UPDATE",
+          "SELECT item_id, title, reporter_id FROM items WHERE item_id = $1 AND item_type = 'lost' AND status IN ('reported', 'under_review') AND matched_found_id IS NULL FOR UPDATE",
           [lostId],
         );
         if (item.item_type !== "found" || !lostResult.rows[0]) {
@@ -1454,6 +1744,17 @@ app.patch(
           "UPDATE items SET status = 'under_review' WHERE item_id = $1 AND matched_found_id IS NULL",
           [lostId],
         );
+
+        if (lostResult.rows[0]?.reporter_id) {
+          await createNotification(client, {
+            userId: lostResult.rows[0].reporter_id,
+            title: "Report Status: Under Review",
+            message: `Your lost report "${lostResult.rows[0].title}" has been moved to Under Review with a candidate found item.`,
+            type: "status_update",
+            link: `/?item=${lostId}`,
+            itemId: lostId,
+          });
+        }
       } else if (status === "under_review") {
         if (item.item_type === "found" && item.review_lost_id) {
           await client.query(
@@ -1502,6 +1803,17 @@ app.patch(
         description: `Verifier updated item #${item.item_id} ("${item.title}") status to "${status}"`,
         req,
       });
+
+      if (item.reporter_id) {
+        await createNotification(client, {
+          userId: item.reporter_id,
+          title: `Report Status: ${status === "under_review" ? "Under Review" : "Reported"}`,
+          message: `Your report "${item.title}" status is now ${status === "under_review" ? "Under Review" : "Reported"}.`,
+          type: "status_update",
+          link: `/?item=${item.item_id}`,
+          itemId: item.item_id,
+        });
+      }
 
       await client.query("COMMIT");
       res.json({ ok: true, status });
@@ -1571,6 +1883,19 @@ app.post(
         req,
       });
 
+      if (prevClaim.claimant_id) {
+        await createNotification(client, {
+          userId: prevClaim.claimant_id,
+          title: decision === "approved" ? "Claim Approved - Ready for Pickup! 🎉" : "Claim Status Update",
+          message: decision === "approved"
+            ? `Your claim for item #${prevClaim.item_id} has been approved by campus staff. Please visit the CSA office to collect your item.`
+            : `Your claim for item #${prevClaim.item_id} was reviewed. Decision: ${decision}${reason ? ` (Reason: ${reason})` : ""}`,
+          type: "claim_decision",
+          link: `/?item=${prevClaim.item_id}`,
+          itemId: prevClaim.item_id,
+        });
+      }
+
       await client.query("COMMIT");
       res.json({ ok: true });
     } catch (err) {
@@ -1589,7 +1914,7 @@ app.post(
   requireRole("staff", "admin"),
   asyncRoute(async (req, res) => {
     const result = await pool.query(
-      "UPDATE claims SET status = 'claimed' WHERE claim_id = $1 AND status = 'approved' RETURNING item_id",
+      "UPDATE claims SET status = 'claimed' WHERE claim_id = $1 AND status = 'approved' RETURNING item_id, claimant_id",
       [req.params.claimId],
     );
     if (!result.rows[0])
@@ -1625,6 +1950,17 @@ app.post(
       description: `Item #${result.rows[0].item_id} marked as completed upon collection`,
       req,
     });
+
+    if (result.rows[0]?.claimant_id) {
+      await createNotification(pool, {
+        userId: result.rows[0].claimant_id,
+        title: "Item Handover Completed",
+        message: "Your item was successfully claimed and marked as completed. Thank you for using Campus Lost & Found!",
+        type: "item_ready",
+        link: `/?item=${result.rows[0].item_id}`,
+        itemId: result.rows[0].item_id,
+      });
+    }
 
     res.json({ ok: true });
   }),

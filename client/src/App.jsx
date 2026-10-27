@@ -303,6 +303,7 @@ export default function App() {
           )}
           onClaim={claimItem}
           onClose={() => setSelectedItem(null)}
+          onSelectSimilar={(item) => setSelectedItem(item)}
         />
       )}
     </>
