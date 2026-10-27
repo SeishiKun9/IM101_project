@@ -139,8 +139,21 @@ CREATE TABLE ownership_proofs (
   proof_id BIGSERIAL PRIMARY KEY,
   claim_id BIGINT NOT NULL REFERENCES claims (claim_id) ON DELETE CASCADE,
   proof_type VARCHAR(60) NOT NULL,
+  description TEXT,
+  image_url TEXT,
   submitted_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TABLE claim_messages (
+  message_id BIGSERIAL PRIMARY KEY,
+  claim_id BIGINT NOT NULL REFERENCES claims (claim_id) ON DELETE CASCADE,
+  sender_id BIGINT NOT NULL REFERENCES users (user_id) ON DELETE CASCADE,
+  message TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_claim_messages_claim_id ON claim_messages (claim_id, created_at ASC);
+CREATE INDEX idx_ownership_proofs_claim_id ON ownership_proofs (claim_id);
 
 CREATE TABLE verifications (
   verification_id BIGSERIAL PRIMARY KEY,

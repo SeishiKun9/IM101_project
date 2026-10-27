@@ -249,6 +249,27 @@ export async function runMigrations(customPool = null) {
       console.error("Error setting up notifications table:", notifErr.message);
     }
 
+    // Ensure ownership_proofs columns (Item 19) and claim_messages table (Item 5) exist
+    try {
+      await client.query(`
+        ALTER TABLE ownership_proofs ADD COLUMN IF NOT EXISTS description TEXT;
+        ALTER TABLE ownership_proofs ADD COLUMN IF NOT EXISTS image_url TEXT;
+        CREATE INDEX IF NOT EXISTS idx_ownership_proofs_claim_id ON ownership_proofs(claim_id);
+
+        CREATE TABLE IF NOT EXISTS claim_messages (
+          message_id BIGSERIAL PRIMARY KEY,
+          claim_id BIGINT NOT NULL REFERENCES claims(claim_id) ON DELETE CASCADE,
+          sender_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+          message TEXT NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS idx_claim_messages_claim_id ON claim_messages(claim_id, created_at ASC);
+      `);
+      console.log("claim_messages and ownership_proofs verified successfully.");
+    } catch (msgErr) {
+      console.error("Error setting up claim_messages and ownership_proofs:", msgErr.message);
+    }
+
     // Ensure default categories exist
     try {
       const defaultCategories = [

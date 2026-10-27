@@ -8,6 +8,7 @@ export default function MyReportsPage({
   onSelectItem,
   onOpenReport,
   onRequireLogin,
+  onOpenClaimChat,
 }) {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState("all"); // "all" | "lost" | "found"
@@ -131,6 +132,7 @@ export default function MyReportsPage({
               privateView={true}
               onClaim={onClaimItem}
               onView={onSelectItem}
+              onOpenClaimChat={onOpenClaimChat}
             />
           ))
         ) : (

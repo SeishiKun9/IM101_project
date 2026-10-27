@@ -9,6 +9,7 @@ import { formatLocation } from "../../utils/location.js";
 import AdminAccountForm from "./AdminAccountForm.jsx";
 import AdminManagement from "./AdminManagement.jsx";
 import AuditLogManagement from "./AuditLogManagement.jsx";
+import ClaimConversationModal from "../ClaimConversationModal.jsx";
 import CompareModal from "./CompareModal.jsx";
 import LocationMapManagement from "./LocationMapManagement.jsx";
 
@@ -21,6 +22,7 @@ export default function ReviewWorkspace({ user, onChanged }) {
   });
   const [selected, setSelected] = useState(null);
   const [selectedLost, setSelectedLost] = useState(null);
+  const [selectedChatClaimId, setSelectedChatClaimId] = useState(null);
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState("compare"); // "compare" | "claims" | "cases" | "locations" | "accounts" | "system" | "audit"
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -716,6 +718,16 @@ export default function ReviewWorkspace({ user, onChanged }) {
                       </div>
 
                       <div className="claim-actions-group">
+                        <button
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => setSelectedChatClaimId(claim.id)}
+                          type="button"
+                          title="Open conversation and review submitted ownership evidence"
+                        >
+                          💬 Chat &amp; Evidence
+                          {claim.messageCount ? ` (${claim.messageCount})` : ""}
+                          {claim.proofCount ? ` 📎 ${claim.proofCount}` : ""}
+                        </button>
                         {claim.status === "pending" ? (
                           <>
                             <button
@@ -856,6 +868,18 @@ export default function ReviewWorkspace({ user, onChanged }) {
           }}
           onMatch={handleMatch}
           onReviewStatus={reviewSelectedMatch}
+        />
+      )}
+
+      {/* Claim Conversation & Evidence Modal */}
+      {selectedChatClaimId && (
+        <ClaimConversationModal
+          claimId={selectedChatClaimId}
+          onClose={() => setSelectedChatClaimId(null)}
+          onClaimUpdated={() => {
+            refresh();
+            onChanged?.();
+          }}
         />
       )}
     </div>

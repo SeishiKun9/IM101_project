@@ -8,6 +8,8 @@ import {
 } from "react-router-dom";
 import { apiRequest } from "./api/client.js";
 import AuthModal from "./components/AuthModal.jsx";
+import ClaimConversationModal from "./components/ClaimConversationModal.jsx";
+import ClaimModal from "./components/ClaimModal.jsx";
 import ForgotPasswordModal from "./components/ForgotPasswordModal.jsx";
 import Header from "./components/Header.jsx";
 import ItemDetailsModal from "./components/ItemDetailsModal.jsx";
@@ -39,6 +41,8 @@ export default function App() {
   const [reportOpen, setReportOpen] = useState(false);
   const [initialReportType, setInitialReportType] = useState("lost");
   const [selectedItem, setSelectedItem] = useState(null);
+  const [claimModalItem, setClaimModalItem] = useState(null);
+  const [activeChatClaimId, setActiveChatClaimId] = useState(null);
   const [pendingAction, setPendingAction] = useState(null);
   const [resetTokenFromUrl, setResetTokenFromUrl] = useState("");
 
@@ -93,6 +97,11 @@ export default function App() {
         })
         .catch(() => {});
     }
+
+    const claimId = params.get("claim");
+    if (claimId) {
+      setActiveChatClaimId(claimId);
+    }
   }, [location.search]);
 
   function requireLogin(action) {
@@ -128,18 +137,9 @@ export default function App() {
     }
   }
 
-  async function claimItem(item) {
-    requireLogin(async () => {
-      try {
-        await apiRequest(`/items/${item.id}/claims`, {
-          method: "POST",
-          body: JSON.stringify({}),
-        });
-        setMessage("Claim request submitted for verifier review.");
-        loadReports();
-      } catch (requestError) {
-        setMessage(requestError.message);
-      }
+  function claimItem(item) {
+    requireLogin(() => {
+      setClaimModalItem(item);
     });
   }
 
@@ -198,6 +198,7 @@ export default function App() {
                 reports={reports}
                 onClaimItem={claimItem}
                 onSelectItem={setSelectedItem}
+                onOpenClaimChat={(claimId) => setActiveChatClaimId(claimId)}
                 onOpenReport={(reportType = "lost") => {
                   setInitialReportType(reportType);
                   setReportOpen(true);
@@ -328,6 +329,33 @@ export default function App() {
           onClaim={claimItem}
           onClose={() => setSelectedItem(null)}
           onSelectSimilar={(item) => setSelectedItem(item)}
+        />
+      )}
+
+      {claimModalItem && (
+        <ClaimModal
+          item={claimModalItem}
+          onClose={() => setClaimModalItem(null)}
+          onSubmitted={(res) => {
+            setClaimModalItem(null);
+            loadReports();
+            loadItems();
+            setMessage("Claim request submitted successfully for verifier review.");
+            if (res?.claimId) {
+              setActiveChatClaimId(res.claimId);
+            }
+          }}
+        />
+      )}
+
+      {activeChatClaimId && (
+        <ClaimConversationModal
+          claimId={activeChatClaimId}
+          onClose={() => setActiveChatClaimId(null)}
+          onClaimUpdated={() => {
+            loadReports();
+            loadItems();
+          }}
         />
       )}
     </>

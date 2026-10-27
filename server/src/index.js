@@ -1327,7 +1327,32 @@ app.get(
   requireDatabase,
   asyncRoute(async (req, res) => {
     const result = await pool.query(
-      `SELECT ${publicItemFields}, i.reporter_name AS "privateReporterName", i.contact_phone AS "contactPhone", i.is_anonymous AS "isAnonymous", i.hide_phone AS "hidePhone", COALESCE(json_agg(json_build_object('id', cl.claim_id, 'status', cl.status, 'claimDate', cl.claim_date, 'reviewedAt', cl.reviewed_at, 'rejectionReason', cl.rejection_reason, 'itemId', cl.item_id)) FILTER (WHERE cl.claim_id IS NOT NULL), '[]') AS claims FROM items i ${itemLocationJoins} LEFT JOIN claims cl ON (cl.item_id = i.item_id OR cl.item_id = i.matched_found_id) AND cl.claimant_id = $1 WHERE i.reporter_id = $1 GROUP BY i.item_id, c.category_name, b.name, f.name, r.name, m.image_path, m.name, l.building, l.location_name, l.floor ORDER BY i.created_at DESC`,
+      `SELECT ${publicItemFields},
+              CASE WHEN i.reporter_id = $1 THEN i.reporter_name ELSE (CASE WHEN i.is_anonymous THEN 'Anonymous' ELSE i.reporter_name END) END AS "privateReporterName",
+              CASE WHEN i.reporter_id = $1 THEN i.contact_phone ELSE (CASE WHEN i.hide_phone THEN NULL ELSE i.contact_phone END) END AS "contactPhone",
+              i.is_anonymous AS "isAnonymous",
+              i.hide_phone AS "hidePhone",
+              COALESCE(
+                json_agg(
+                  json_build_object(
+                    'id', cl.claim_id,
+                    'status', cl.status,
+                    'claimDate', cl.claim_date,
+                    'reviewedAt', cl.reviewed_at,
+                    'rejectionReason', cl.rejection_reason,
+                    'itemId', cl.item_id,
+                    'messageCount', (SELECT COUNT(*)::int FROM claim_messages WHERE claim_id = cl.claim_id),
+                    'proofCount', (SELECT COUNT(*)::int FROM ownership_proofs WHERE claim_id = cl.claim_id)
+                  )
+                ) FILTER (WHERE cl.claim_id IS NOT NULL),
+                '[]'
+              ) AS claims
+       FROM items i
+       ${itemLocationJoins}
+       LEFT JOIN claims cl ON (cl.item_id = i.item_id OR cl.item_id = i.matched_found_id) AND cl.claimant_id = $1
+       WHERE i.reporter_id = $1 OR i.item_id IN (SELECT item_id FROM claims WHERE claimant_id = $1)
+       GROUP BY i.item_id, c.category_name, b.name, f.name, r.name, m.image_path, m.name, l.building, l.location_name, l.floor
+       ORDER BY i.created_at DESC`,
       [req.user.id],
     );
     res.json(result.rows);
@@ -1520,18 +1545,39 @@ app.post(
       return res
         .status(409)
         .json({ error: "You already have an active claim for this item." });
+    const { proofType, description, imageUrl, initialMessage } = req.body || {};
     const claim = await pool.query(
       "INSERT INTO claims (item_id, claimant_id) VALUES ($1, $2) ON CONFLICT (item_id, claimant_id) DO UPDATE SET status = 'pending', rejection_reason = NULL, reviewed_by = NULL, reviewed_at = NULL RETURNING claim_id",
       [found.item_id, req.user.id],
     );
+    const newClaimId = claim.rows[0].claim_id;
+
+    if (imageUrl || description || proofType) {
+      await pool.query(
+        "INSERT INTO ownership_proofs (claim_id, proof_type, description, image_url) VALUES ($1, $2, $3, $4)",
+        [
+          newClaimId,
+          proofType || "Photo / Identification Proof",
+          description ? String(description).trim() : null,
+          imageUrl || null,
+        ],
+      );
+    }
+
+    if (initialMessage && typeof initialMessage === "string" && initialMessage.trim()) {
+      await pool.query(
+        "INSERT INTO claim_messages (claim_id, sender_id, message) VALUES ($1, $2, $3)",
+        [newClaimId, req.user.id, initialMessage.trim()],
+      );
+    }
 
     await logCreate(pool, {
       actor: req.user,
       entityType: "claims",
-      entityId: claim.rows[0].claim_id,
-      description: `${req.user.name} submitted claim #${claim.rows[0].claim_id} for found item #${found.item_id}`,
+      entityId: newClaimId,
+      description: `${req.user.name} submitted claim #${newClaimId} for found item #${found.item_id}`,
       newValues: {
-        claimId: claim.rows[0].claim_id,
+        claimId: newClaimId,
         itemId: found.item_id,
         claimantId: req.user.id,
         status: "pending",
@@ -1539,7 +1585,183 @@ app.post(
       req,
     });
 
-    res.status(201).json({ claimId: claim.rows[0].claim_id });
+    res.status(201).json({ claimId: newClaimId });
+  }),
+);
+
+// ==========================================
+// Claim Messaging & Ownership Evidence (Items 5 & 19)
+// ==========================================
+async function getClaimWithAccess(claimId, user, dbClient = pool) {
+  const claimRes = await dbClient.query(
+    `SELECT cl.claim_id AS id, cl.claim_id, cl.item_id AS "itemId", cl.claimant_id AS "claimantId",
+            cl.status, cl.claim_date AS "claimDate", cl.reviewed_by AS "reviewedBy",
+            cl.rejection_reason AS "rejectionReason",
+            i.title AS "itemTitle", i.item_type AS "itemType",
+            u.name AS "claimantName", u.email AS "claimantEmail"
+     FROM claims cl
+     JOIN items i ON i.item_id = cl.item_id
+     JOIN users u ON u.user_id = cl.claimant_id
+     WHERE cl.claim_id = $1`,
+    [claimId],
+  );
+  const claim = claimRes.rows[0];
+  if (!claim) return { error: "Claim not found.", status: 404 };
+
+  const isClaimant = Number(claim.claimantId) === Number(user.id);
+  const isStaff = user.role === "staff" || user.role === "admin";
+  if (!isClaimant && !isStaff) {
+    return { error: "You do not have permission to view or participate in this claim.", status: 403 };
+  }
+  return { claim, isClaimant, isStaff };
+}
+
+app.get(
+  "/api/claims/:claimId/messages",
+  requireAuth,
+  requireDatabase,
+  asyncRoute(async (req, res) => {
+    const access = await getClaimWithAccess(req.params.claimId, req.user);
+    if (access.error) return res.status(access.status).json({ error: access.error });
+
+    const messages = await pool.query(
+      `SELECT m.message_id AS id, m.claim_id AS "claimId", m.sender_id AS "senderId",
+              m.message, m.created_at AS "createdAt",
+              u.name AS "senderName", u.role AS "senderRole"
+       FROM claim_messages m
+       JOIN users u ON u.user_id = m.sender_id
+       WHERE m.claim_id = $1
+       ORDER BY m.created_at ASC`,
+      [req.params.claimId],
+    );
+
+    res.json({
+      claim: access.claim,
+      messages: messages.rows,
+    });
+  }),
+);
+
+app.post(
+  "/api/claims/:claimId/messages",
+  requireAuth,
+  requireDatabase,
+  asyncRoute(async (req, res) => {
+    const access = await getClaimWithAccess(req.params.claimId, req.user);
+    if (access.error) return res.status(access.status).json({ error: access.error });
+
+    const text = String(req.body.message || "").trim();
+    if (!text) {
+      return res.status(400).json({ error: "Message content cannot be blank." });
+    }
+    if (text.length > 2000) {
+      return res.status(400).json({ error: "Message cannot exceed 2000 characters." });
+    }
+
+    const inserted = await pool.query(
+      `INSERT INTO claim_messages (claim_id, sender_id, message)
+       VALUES ($1, $2, $3)
+       RETURNING message_id AS id, created_at AS "createdAt"`,
+      [req.params.claimId, req.user.id, text],
+    );
+
+    const messageObj = {
+      id: inserted.rows[0].id,
+      claimId: Number(req.params.claimId),
+      senderId: req.user.id,
+      senderName: req.user.name,
+      senderRole: req.user.role,
+      message: text,
+      createdAt: inserted.rows[0].createdAt,
+    };
+
+    const claim = access.claim;
+    if (access.isStaff) {
+      await createNotification(pool, {
+        userId: claim.claimantId,
+        title: `Verifier Message on Claim #${claim.id}`,
+        message: `${req.user.name} (Verifier): "${text.slice(0, 80)}${text.length > 80 ? "..." : ""}"`,
+        type: "claim_update",
+        link: `/?claim=${claim.id}`,
+        itemId: claim.itemId,
+      });
+    } else {
+      if (claim.reviewedBy) {
+        await createNotification(pool, {
+          userId: claim.reviewedBy,
+          title: `Claimant Reply on Claim #${claim.id}`,
+          message: `${req.user.name}: "${text.slice(0, 80)}${text.length > 80 ? "..." : ""}"`,
+          type: "claim_update",
+          link: `/verifier`,
+          itemId: claim.itemId,
+        });
+      }
+    }
+
+    res.status(201).json({ message: messageObj });
+  }),
+);
+
+app.get(
+  "/api/claims/:claimId/evidence",
+  requireAuth,
+  requireDatabase,
+  asyncRoute(async (req, res) => {
+    const access = await getClaimWithAccess(req.params.claimId, req.user);
+    if (access.error) return res.status(access.status).json({ error: access.error });
+
+    const proofs = await pool.query(
+      `SELECT proof_id AS id, proof_type AS "proofType", description,
+              image_url AS "imageUrl", submitted_at AS "submittedAt"
+       FROM ownership_proofs
+       WHERE claim_id = $1
+       ORDER BY submitted_at ASC`,
+      [req.params.claimId],
+    );
+
+    res.json({ proofs: proofs.rows });
+  }),
+);
+
+app.post(
+  "/api/claims/:claimId/evidence",
+  requireAuth,
+  requireDatabase,
+  asyncRoute(async (req, res) => {
+    const access = await getClaimWithAccess(req.params.claimId, req.user);
+    if (access.error) return res.status(access.status).json({ error: access.error });
+
+    const { proofType, description, imageUrl } = req.body;
+    if (!description && !imageUrl) {
+      return res.status(400).json({ error: "Please provide an evidence description or photo attachment." });
+    }
+
+    const inserted = await pool.query(
+      `INSERT INTO ownership_proofs (claim_id, proof_type, description, image_url)
+       VALUES ($1, $2, $3, $4)
+       RETURNING proof_id AS id, proof_type AS "proofType", description,
+                 image_url AS "imageUrl", submitted_at AS "submittedAt"`,
+      [
+        req.params.claimId,
+        proofType || "Photo / Receipt Attachment",
+        description ? String(description).trim() : null,
+        imageUrl || null,
+      ],
+    );
+
+    const claim = access.claim;
+    if (!access.isStaff && claim.reviewedBy) {
+      await createNotification(pool, {
+        userId: claim.reviewedBy,
+        title: `New Evidence Uploaded for Claim #${claim.id}`,
+        message: `${req.user.name} attached ownership proof for "${claim.itemTitle}".`,
+        type: "claim_update",
+        link: `/verifier`,
+        itemId: claim.itemId,
+      });
+    }
+
+    res.status(201).json({ proof: inserted.rows[0] });
   }),
 );
 
@@ -1599,7 +1821,7 @@ app.get(
       `SELECT ${publicItemFields}, i.reporter_name AS "privateReporterName", i.contact_phone AS "contactPhone", i.is_anonymous AS "isAnonymous", i.hide_phone AS "hidePhone" FROM items i ${itemLocationJoins} WHERE i.item_type = 'lost' AND i.status IN ('reported', 'under_review') AND i.matched_found_id IS NULL ORDER BY i.created_at`,
     );
     const claims = await pool.query(
-      'SELECT cl.claim_id AS id, cl.status, cl.claim_date AS "claimDate", cl.reviewed_at AS "reviewedAt", cl.rejection_reason AS "rejectionReason", cl.item_id AS "itemId", u.name AS claimant, u.email, i.reporter_name AS "finderName", i.contact_phone AS "finderPhone" FROM claims cl JOIN users u ON u.user_id = cl.claimant_id JOIN items i ON i.item_id = cl.item_id ORDER BY cl.claim_date DESC',
+      `SELECT cl.claim_id AS id, cl.status, cl.claim_date AS "claimDate", cl.reviewed_at AS "reviewedAt", cl.rejection_reason AS "rejectionReason", cl.item_id AS "itemId", i.title AS "itemTitle", u.name AS claimant, u.email, i.reporter_name AS "finderName", i.contact_phone AS "finderPhone", (SELECT COUNT(*)::int FROM claim_messages WHERE claim_id = cl.claim_id) AS "messageCount", (SELECT COUNT(*)::int FROM ownership_proofs WHERE claim_id = cl.claim_id) AS "proofCount" FROM claims cl JOIN users u ON u.user_id = cl.claimant_id JOIN items i ON i.item_id = cl.item_id ORDER BY cl.claim_date DESC`,
     );
     const cases = await pool.query(
       `SELECT ${publicItemFields}, 

@@ -10,6 +10,7 @@ export default function ReportCard({
   item,
   onView,
   onClaim,
+  onOpenClaimChat,
   privateView = false,
 }) {
   const displayName = privateView
@@ -251,15 +252,45 @@ export default function ReportCard({
                 ? "notice-danger"
                 : "notice-amber"
           }`}
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            flexWrap: "wrap",
+            gap: "0.5rem",
+          }}
         >
-          <strong>
-            Claim #{claim.id} ({claimStatusText(claim.status)}):
-          </strong>{" "}
-          {claim.status === "approved"
-            ? "Your claim has been approved! Please proceed to CSA for ownership verification and item collection."
-            : claim.rejectionReason
-              ? `Note: ${claim.rejectionReason}`
-              : "Review in progress by CSA staff."}
+          <div>
+            <strong>
+              Claim #{claim.id} ({claimStatusText(claim.status)}):
+            </strong>{" "}
+            {claim.status === "approved"
+              ? "Your claim has been approved! Please proceed to CSA for ownership verification and item collection."
+              : claim.rejectionReason
+                ? `Note: ${claim.rejectionReason}`
+                : "Review in progress by CSA staff."}
+          </div>
+
+          {onOpenClaimChat && (
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              style={{
+                padding: "0.3rem 0.65rem",
+                fontSize: "0.8rem",
+                whiteSpace: "nowrap",
+                fontWeight: 600,
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenClaimChat(claim.id);
+              }}
+            >
+              💬 Discussion &amp; Proofs
+              {claim.messageCount ? ` (${claim.messageCount})` : ""}
+              {claim.proofCount ? ` 📎 ${claim.proofCount}` : ""}
+            </button>
+          )}
         </div>
       ))}
     </article>
