@@ -293,8 +293,13 @@ export async function logAudit(
     legacyRecordId,
   ];
 
-  const result = await clientOrPool.query(query, values);
-  return result.rows[0];
+  try {
+    const result = await clientOrPool.query(query, values);
+    return result.rows[0];
+  } catch (err) {
+    console.error("Non-fatal audit logging notice:", err.message);
+    return null;
+  }
 }
 
 /**

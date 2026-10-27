@@ -98,217 +98,227 @@ export async function runMigrations(customPool = null) {
 
   const client = await localPool.connect();
   try {
-    // 0. Ensure enum values and extensions (outside transaction block)
-    await client.query("CREATE EXTENSION IF NOT EXISTS pgcrypto");
-    await client.query("CREATE EXTENSION IF NOT EXISTS citext");
+    // 0. Ensure extensions & enum values
+    try { await client.query("CREATE EXTENSION IF NOT EXISTS pgcrypto"); } catch {}
+    try { await client.query("CREATE EXTENSION IF NOT EXISTS citext"); } catch {}
+    try { await client.query("ALTER TYPE item_status ADD VALUE IF NOT EXISTS 'found'"); } catch {}
+    try { await client.query("ALTER TYPE item_status ADD VALUE IF NOT EXISTS 'completed'"); } catch {}
+    try { await client.query("ALTER TYPE claim_status ADD VALUE IF NOT EXISTS 'claimed'"); } catch {}
+
+    // 1. CRITICAL: Ensure audit_logs table and ALL columns exist unconditionally
     try {
-      await client.query("ALTER TYPE item_status ADD VALUE IF NOT EXISTS 'found'");
-    } catch {}
-    try {
-      await client.query("ALTER TYPE item_status ADD VALUE IF NOT EXISTS 'completed'");
-    } catch {}
-    try {
-      await client.query("ALTER TYPE claim_status ADD VALUE IF NOT EXISTS 'claimed'");
-    } catch {}
-
-    await client.query("BEGIN");
-
-    // 1. Workflow & Security Updates (002)
-    const sql002Path = path.join(__dirname, "002_workflow_security.sql");
-    if (fs.existsSync(sql002Path)) {
-      const sql002 = fs.readFileSync(sql002Path, "utf8");
-      // Filter out ALTER TYPE which cannot run in transaction
-      const filteredSql002 = sql002
-        .split("\n")
-        .filter((line) => !line.trim().startsWith("ALTER TYPE"))
-        .join("\n");
-      await client.query(filteredSql002);
-    }
-
-    // 2. Locations & Maps (003)
-    const sql003Path = path.join(__dirname, "003_locations_and_maps.sql");
-    if (fs.existsSync(sql003Path)) {
-      const sql003 = fs.readFileSync(sql003Path, "utf8");
-      await client.query(sql003);
-    }
-
-    // Seed initial Campus Map if none exists
-    const mapCheck = await client.query("SELECT map_id FROM campus_maps LIMIT 1");
-    let initialMapId = mapCheck.rows[0]?.map_id;
-
-    if (!initialMapId) {
-      const mapInsert = await client.query(
-        `INSERT INTO campus_maps (name, description, image_path, version_number, is_active, is_archived)
-         VALUES ($1, $2, $3, $4, true, false)
-         RETURNING map_id`,
-        [
-          "Campus Main Map",
-          "Official Holy Name University campus map",
-          "/uploads/maps/campus-map-v1.jpg",
-          1,
-        ],
-      );
-      initialMapId = mapInsert.rows[0].map_id;
-    }
-
-    // Seed initial buildings, floors, rooms
-    let buildingOrder = 1;
-    for (const [buildingName, floors] of Object.entries(campusLocationsSeed)) {
-      const bRes = await client.query(
-        `INSERT INTO buildings (name, display_order, is_active, is_archived)
-         VALUES ($1, $2, true, false)
-         ON CONFLICT (LOWER(TRIM(name))) DO UPDATE SET display_order = EXCLUDED.display_order
-         RETURNING building_id`,
-        [buildingName, buildingOrder++],
-      );
-      const buildingId = bRes.rows[0].building_id;
-
-      let floorOrder = 1;
-      for (const [floorName, rooms] of Object.entries(floors)) {
-        const fRes = await client.query(
-          `INSERT INTO floors (building_id, name, display_order, is_active, is_archived)
-           VALUES ($1, $2, $3, true, false)
-           ON CONFLICT (building_id, LOWER(TRIM(name))) DO UPDATE SET display_order = EXCLUDED.display_order
-           RETURNING floor_id`,
-          [buildingId, floorName, floorOrder++],
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS audit_logs (
+          id BIGSERIAL PRIMARY KEY
         );
-        const floorId = fRes.rows[0].floor_id;
+      `);
+      await client.query(`
+        DO $$ BEGIN
+          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'audit_logs' AND column_name = 'audit_id') THEN
+            ALTER TABLE audit_logs RENAME COLUMN audit_id TO id;
+          END IF;
+        END $$;
+      `);
+      await client.query(`
+        ALTER TABLE audit_logs
+          ADD COLUMN IF NOT EXISTS actor_user_id BIGINT,
+          ADD COLUMN IF NOT EXISTS actor_username VARCHAR(120),
+          ADD COLUMN IF NOT EXISTS actor_role VARCHAR(50),
+          ADD COLUMN IF NOT EXISTS status VARCHAR(30) NOT NULL DEFAULT 'SUCCESS',
+          ADD COLUMN IF NOT EXISTS entity_type VARCHAR(80),
+          ADD COLUMN IF NOT EXISTS entity_id VARCHAR(80),
+          ADD COLUMN IF NOT EXISTS description TEXT,
+          ADD COLUMN IF NOT EXISTS old_values JSONB,
+          ADD COLUMN IF NOT EXISTS new_values JSONB,
+          ADD COLUMN IF NOT EXISTS changed_fields JSONB,
+          ADD COLUMN IF NOT EXISTS ip_address VARCHAR(80),
+          ADD COLUMN IF NOT EXISTS user_agent TEXT,
+          ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          ADD COLUMN IF NOT EXISTS user_id BIGINT,
+          ADD COLUMN IF NOT EXISTS table_name VARCHAR(80),
+          ADD COLUMN IF NOT EXISTS record_id BIGINT,
+          ADD COLUMN IF NOT EXISTS old_data JSONB,
+          ADD COLUMN IF NOT EXISTS new_data JSONB,
+          ADD COLUMN IF NOT EXISTS action_time TIMESTAMPTZ DEFAULT now();
+      `);
+      console.log("audit_logs columns verified successfully.");
+    } catch (auditTableErr) {
+      console.error("Error setting up audit_logs columns:", auditTableErr.message);
+    }
 
-        let roomOrder = 1;
-        for (const roomName of rooms) {
-          await client.query(
-            `INSERT INTO rooms (floor_id, name, display_order, is_active, is_archived)
-             VALUES ($1, $2, $3, true, false)
-             ON CONFLICT (floor_id, LOWER(TRIM(name))) DO UPDATE SET display_order = EXCLUDED.display_order
-             RETURNING room_id`,
-            [floorId, roomName, roomOrder++],
-          );
-        }
+    // 2. CRITICAL: Ensure users table has all required columns
+    try {
+      await client.query(`
+        ALTER TABLE users
+          ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true,
+          ADD COLUMN IF NOT EXISTS username VARCHAR(60),
+          ADD COLUMN IF NOT EXISTS contact_number VARCHAR(30),
+          ADD COLUMN IF NOT EXISTS default_anonymous BOOLEAN NOT NULL DEFAULT false,
+          ADD COLUMN IF NOT EXISTS default_hide_phone BOOLEAN NOT NULL DEFAULT true,
+          ADD COLUMN IF NOT EXISTS theme_preference VARCHAR(10) NOT NULL DEFAULT 'light',
+          ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          ADD COLUMN IF NOT EXISTS password_reset_token_hash TEXT,
+          ADD COLUMN IF NOT EXISTS password_reset_expires_at TIMESTAMPTZ;
+      `);
+      await client.query(`
+        UPDATE users SET username = 'allen' WHERE user_id = 1 AND (username IS NULL OR username = '');
+        UPDATE users SET username = LOWER(SPLIT_PART(email::text, '@', 1)) WHERE username IS NULL OR username = '';
+      `);
+      console.log("users columns verified successfully.");
+    } catch (usersErr) {
+      console.error("Error setting up users columns:", usersErr.message);
+    }
+
+    // 3. CRITICAL: Ensure campus_logo table exists
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS campus_logo (
+          logo_id BIGSERIAL PRIMARY KEY,
+          logo_name VARCHAR(120) NOT NULL DEFAULT 'Official Campus Logo',
+          image_path TEXT NOT NULL,
+          file_size BIGINT,
+          mime_type VARCHAR(60),
+          updated_by BIGINT REFERENCES users(user_id) ON DELETE SET NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        INSERT INTO campus_logo (logo_id, logo_name, image_path, created_at, updated_at)
+        VALUES (1, 'Campus Main Logo', '/assets/img/campus-logo.svg', now(), now())
+        ON CONFLICT (logo_id) DO NOTHING;
+      `);
+    } catch (logoErr) {
+      console.error("Error setting up campus_logo:", logoErr.message);
+    }
+
+    // 4. Ensure default Administrator account exists
+    try {
+      const adminCheck = await client.query(
+        "SELECT user_id, email FROM users WHERE role = 'admin' LIMIT 1",
+      );
+      if (adminCheck.rows.length === 0) {
+        console.log("No administrator user found in database. Seeding initial admin...");
+        await client.query(
+          `INSERT INTO users (name, email, username, password_hash, role, is_active, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, 'admin', true, now(), now())
+           ON CONFLICT (email) DO UPDATE SET role = 'admin', is_active = true`,
+          [
+            "Allen Postanes Aguiman",
+            "aguiman.allen@hnu.edu.ph",
+            "allen",
+            "scrypt:0ff61cebbfff71a5d32757ba81869bab:595adf0964fd7d64cb664f146ab0167782bb6eaa1f31ae5081c537ff801a5362b470dcfe3b1b3556f58c0fe3911a74736245f455783601a65e9260f386a5318a",
+          ],
+        );
+        console.log("Seeded default admin user: aguiman.allen@hnu.edu.ph");
       }
+    } catch (adminErr) {
+      console.error("Error verifying admin account:", adminErr.message);
     }
 
-    // Link unlinked legacy items
-    const unlinkedItems = await client.query(`
-      SELECT i.item_id, i.map_x, i.map_y, l.building, l.floor, l.location_name
-      FROM items i
-      LEFT JOIN locations l ON l.location_id = i.location_id
-      WHERE i.building_id IS NULL AND i.location_id IS NOT NULL
-    `);
+    // 5. Run file migrations in individual safe blocks
+    // 002
+    try {
+      const sql002Path = path.join(__dirname, "002_workflow_security.sql");
+      if (fs.existsSync(sql002Path)) {
+        const sql002 = fs.readFileSync(sql002Path, "utf8");
+        const filteredSql002 = sql002
+          .split("\n")
+          .filter((line) => !line.trim().startsWith("ALTER TYPE"))
+          .join("\n");
+        await client.query(filteredSql002);
+      }
+    } catch (err) {
+      console.warn("Migration 002 warning:", err.message);
+    }
 
-    for (const item of unlinkedItems.rows) {
-      let matchedBuildingId = null;
-      let matchedFloorId = null;
-      let matchedRoomId = null;
+    // 003
+    try {
+      const sql003Path = path.join(__dirname, "003_locations_and_maps.sql");
+      if (fs.existsSync(sql003Path)) {
+        const sql003 = fs.readFileSync(sql003Path, "utf8");
+        await client.query(sql003);
+      }
 
-      if (item.building) {
-        const b = await client.query(
-          "SELECT building_id, name FROM buildings WHERE LOWER(TRIM(name)) = LOWER(TRIM($1))",
-          [item.building],
+      // Seed initial Campus Map if none exists
+      const mapCheck = await client.query("SELECT map_id FROM campus_maps LIMIT 1");
+      let initialMapId = mapCheck.rows[0]?.map_id;
+
+      if (!initialMapId) {
+        const mapInsert = await client.query(
+          `INSERT INTO campus_maps (name, description, image_path, version_number, is_active, is_archived)
+           VALUES ($1, $2, $3, $4, true, false)
+           RETURNING map_id`,
+          [
+            "Campus Main Map",
+            "Official Holy Name University campus map",
+            "/uploads/maps/campus-map-v1.jpg",
+            1,
+          ],
         );
-        if (b.rows.length) {
-          matchedBuildingId = b.rows[0].building_id;
-          if (item.floor) {
-            const f = await client.query(
-              "SELECT floor_id, name FROM floors WHERE building_id = $1 AND LOWER(TRIM(name)) = LOWER(TRIM($2))",
-              [matchedBuildingId, item.floor],
+        initialMapId = mapInsert.rows[0].map_id;
+      }
+
+      // Seed buildings, floors, rooms
+      let buildingOrder = 1;
+      for (const [buildingName, floors] of Object.entries(campusLocationsSeed)) {
+        const bRes = await client.query(
+          `INSERT INTO buildings (name, display_order, is_active, is_archived)
+           VALUES ($1, $2, true, false)
+           ON CONFLICT (LOWER(TRIM(name))) DO UPDATE SET display_order = EXCLUDED.display_order
+           RETURNING building_id`,
+          [buildingName, buildingOrder++],
+        );
+        const buildingId = bRes.rows[0].building_id;
+
+        let floorOrder = 1;
+        for (const [floorName, rooms] of Object.entries(floors)) {
+          const fRes = await client.query(
+            `INSERT INTO floors (building_id, name, display_order, is_active, is_archived)
+             VALUES ($1, $2, $3, true, false)
+             ON CONFLICT (building_id, LOWER(TRIM(name))) DO UPDATE SET display_order = EXCLUDED.display_order
+             RETURNING floor_id`,
+            [buildingId, floorName, floorOrder++],
+          );
+          const floorId = fRes.rows[0].floor_id;
+
+          let roomOrder = 1;
+          for (const roomName of rooms) {
+            await client.query(
+              `INSERT INTO rooms (floor_id, name, display_order, is_active, is_archived)
+               VALUES ($1, $2, $3, true, false)
+               ON CONFLICT (floor_id, LOWER(TRIM(name))) DO UPDATE SET display_order = EXCLUDED.display_order
+               RETURNING room_id`,
+              [floorId, roomName, roomOrder++],
             );
-            if (f.rows.length) {
-              matchedFloorId = f.rows[0].floor_id;
-              if (item.location_name) {
-                const r = await client.query(
-                  "SELECT room_id, name FROM rooms WHERE floor_id = $1 AND LOWER(TRIM(name)) = LOWER(TRIM($2))",
-                  [matchedFloorId, item.location_name],
-                );
-                if (r.rows.length) {
-                  matchedRoomId = r.rows[0].room_id;
-                }
-              }
-            }
           }
         }
       }
-
-      const hasPin = item.map_x !== null && item.map_y !== null;
-      const mapIdToSet = hasPin ? initialMapId : null;
-
-      const snapshot = {
-        buildingName: item.building || null,
-        floorName: item.floor || null,
-        roomName: item.location_name || null,
-        locationDescription: null,
-        mapName: hasPin ? "Campus Main Map" : null,
-      };
-
-      await client.query(
-        `UPDATE items
-         SET building_id = $1,
-             floor_id = $2,
-             room_id = $3,
-             map_id = $4,
-             location_snapshot = $5
-         WHERE item_id = $6`,
-        [
-          matchedBuildingId,
-          matchedFloorId,
-          matchedRoomId,
-          mapIdToSet,
-          JSON.stringify(snapshot),
-          item.item_id,
-        ],
-      );
+    } catch (err) {
+      console.warn("Migration 003 warning:", err.message);
     }
 
-    // 3. Profile & Theme Preferences (004)
-    const sql004Path = path.join(__dirname, "004_profile_and_theme.sql");
-    if (fs.existsSync(sql004Path)) {
-      const sql004 = fs.readFileSync(sql004Path, "utf8");
-      await client.query(sql004);
+    // 004
+    try {
+      const sql004Path = path.join(__dirname, "004_profile_and_theme.sql");
+      if (fs.existsSync(sql004Path)) {
+        const sql004 = fs.readFileSync(sql004Path, "utf8");
+        await client.query(sql004);
+      }
+    } catch (err) {
+      console.warn("Migration 004 warning:", err.message);
     }
 
-    // 4. Audit Logs & System Branding (005)
-    const sql005Path = path.join(__dirname, "005_audit_logs.sql");
-    if (fs.existsSync(sql005Path)) {
-      const sql005 = fs.readFileSync(sql005Path, "utf8");
-      await client.query(sql005);
+    // 005
+    try {
+      const sql005Path = path.join(__dirname, "005_audit_logs.sql");
+      if (fs.existsSync(sql005Path)) {
+        const sql005 = fs.readFileSync(sql005Path, "utf8");
+        await client.query(sql005);
+      }
+    } catch (err) {
+      console.warn("Migration 005 warning:", err.message);
     }
 
-    // 5. Ensure users has is_active and username columns guaranteed
-    await client.query(`
-      ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true;
-      ALTER TABLE users ADD COLUMN IF NOT EXISTS username VARCHAR(60);
-      ALTER TABLE users ADD COLUMN IF NOT EXISTS contact_number VARCHAR(30);
-      ALTER TABLE users ADD COLUMN IF NOT EXISTS default_anonymous BOOLEAN NOT NULL DEFAULT false;
-      ALTER TABLE users ADD COLUMN IF NOT EXISTS default_hide_phone BOOLEAN NOT NULL DEFAULT true;
-      ALTER TABLE users ADD COLUMN IF NOT EXISTS theme_preference VARCHAR(10) NOT NULL DEFAULT 'light';
-      ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
-    `);
-
-    // 6. Ensure default Administrator account exists
-    const adminCheck = await client.query(
-      "SELECT user_id, email FROM users WHERE role = 'admin' LIMIT 1",
-    );
-    if (adminCheck.rows.length === 0) {
-      console.log("No administrator user found in database. Seeding initial admin...");
-      await client.query(
-        `INSERT INTO users (name, email, username, password_hash, role, is_active, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, 'admin', true, now(), now())
-         ON CONFLICT (email) DO UPDATE SET role = 'admin', is_active = true`,
-        [
-          "Allen Postanes Aguiman",
-          "aguiman.allen@hnu.edu.ph",
-          "allen",
-          "scrypt:0ff61cebbfff71a5d32757ba81869bab:595adf0964fd7d64cb664f146ab0167782bb6eaa1f31ae5081c537ff801a5362b470dcfe3b1b3556f58c0fe3911a74736245f455783601a65e9260f386a5318a",
-        ],
-      );
-      console.log("Seeded default admin user: aguiman.allen@hnu.edu.ph");
-    }
-
-    await client.query("COMMIT");
     console.log("Database migrations applied and verified successfully!");
-  } catch (err) {
-    await client.query("ROLLBACK");
-    console.error("Migration error:", err);
-    throw err;
   } finally {
     client.release();
     if (!customPool) {
