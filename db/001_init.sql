@@ -186,10 +186,10 @@ BEGIN
   UPDATE items SET status = 'claimed' WHERE item_id = (SELECT item_id FROM claims WHERE claim_id = p_claim_id);
 END; $$;
 
-CREATE ROLE app_readonly NOLOGIN;
-
-GRANT USAGE ON SCHEMA public TO app_readonly;
-
-GRANT
-SELECT
-  ON ALL TABLES IN SCHEMA public TO app_readonly;
+DO $$ BEGIN
+  CREATE ROLE app_readonly NOLOGIN;
+  GRANT USAGE ON SCHEMA public TO app_readonly;
+  GRANT SELECT ON ALL TABLES IN SCHEMA public TO app_readonly;
+EXCEPTION WHEN OTHERS THEN
+  NULL;
+END $$;

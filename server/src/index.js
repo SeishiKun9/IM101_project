@@ -297,16 +297,27 @@ app.post(
         .json({ error: "Please use your school email address." });
     try {
       const role = accountType === "admin" ? "admin" : "student";
+      let baseUsername = normalizedEmail.split("@")[0].replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 45) || "user";
+      let username = baseUsername;
+      const existingUser = await pool.query("SELECT 1 FROM users WHERE LOWER(username) = LOWER($1)", [username]);
+      if (existingUser.rows.length > 0) {
+        username = `${baseUsername}_${Math.floor(1000 + Math.random() * 9000)}`;
+      }
+
       const result = await pool.query(
-        "INSERT INTO users (name, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING user_id, name, email, password_hash, role",
-        [name.trim(), normalizedEmail, hashPassword(password), role],
+        "INSERT INTO users (name, email, username, password_hash, role) VALUES ($1, $2, $3, $4, $5) RETURNING user_id, name, email, username, password_hash, role",
+        [name.trim(), normalizedEmail, username, hashPassword(password), role],
       );
       res.status(201).json(await startSession(result.rows[0]));
     } catch (error) {
-      if (error.code === "23505")
+      if (error.code === "23505") {
+        if (error.constraint === "users_username_unique") {
+          return res.status(409).json({ error: "That username is already taken." });
+        }
         return res
           .status(409)
           .json({ error: "That email already has an account." });
+      }
       throw error;
     }
   }),
@@ -1779,10 +1790,13 @@ app.delete(
 );
 
 app.use((error, req, res, next) => {
-  console.error(error);
-  res
-    .status(500)
-    .json({ error: "The server could not complete that request." });
+  console.error("API error handler:", error);
+  const status = Number(error.status || error.statusCode || 500);
+  const message = error.message || "The server could not complete that request.";
+  res.status(status).json({
+    error: message,
+    code: error.code || undefined,
+  });
 });
 app.get("*", (req, res) => {
   const distIndex = path.join(__dirname, "../../client/dist/index.html");

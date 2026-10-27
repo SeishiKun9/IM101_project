@@ -98,9 +98,28 @@ export async function runMigrations(customPool = null) {
 
   const client = await localPool.connect();
   try {
-    // 0. Ensure extensions & enum values
+    // 0. Ensure extensions & base schema
     try { await client.query("CREATE EXTENSION IF NOT EXISTS pgcrypto"); } catch {}
     try { await client.query("CREATE EXTENSION IF NOT EXISTS citext"); } catch {}
+
+    // Check if foundational schema exists
+    try {
+      const tableCheck = await client.query(
+        "SELECT 1 FROM information_schema.tables WHERE table_name = 'users' LIMIT 1"
+      );
+      if (tableCheck.rows.length === 0) {
+        console.log("Empty database detected. Applying 001_init.sql...");
+        const sql001Path = path.join(__dirname, "001_init.sql");
+        if (fs.existsSync(sql001Path)) {
+          const sql001 = fs.readFileSync(sql001Path, "utf8");
+          await client.query(sql001);
+          console.log("001_init.sql applied successfully.");
+        }
+      }
+    } catch (initErr) {
+      console.warn("Base schema init notice:", initErr.message);
+    }
+
     try { await client.query("ALTER TYPE item_status ADD VALUE IF NOT EXISTS 'found'"); } catch {}
     try { await client.query("ALTER TYPE item_status ADD VALUE IF NOT EXISTS 'completed'"); } catch {}
     try { await client.query("ALTER TYPE claim_status ADD VALUE IF NOT EXISTS 'claimed'"); } catch {}
@@ -124,6 +143,7 @@ export async function runMigrations(customPool = null) {
           ADD COLUMN IF NOT EXISTS actor_user_id BIGINT,
           ADD COLUMN IF NOT EXISTS actor_username VARCHAR(120),
           ADD COLUMN IF NOT EXISTS actor_role VARCHAR(50),
+          ADD COLUMN IF NOT EXISTS action VARCHAR(50) DEFAULT 'SYSTEM',
           ADD COLUMN IF NOT EXISTS status VARCHAR(30) NOT NULL DEFAULT 'SUCCESS',
           ADD COLUMN IF NOT EXISTS entity_type VARCHAR(80),
           ADD COLUMN IF NOT EXISTS entity_id VARCHAR(80),
@@ -188,6 +208,27 @@ export async function runMigrations(customPool = null) {
       `);
     } catch (logoErr) {
       console.error("Error setting up campus_logo:", logoErr.message);
+    }
+
+    // Ensure default categories exist
+    try {
+      const defaultCategories = [
+        "Electronics",
+        "Documents & IDs",
+        "Clothing & Accessories",
+        "Bags & Wallets",
+        "Keys",
+        "Books & Stationery",
+        "Others",
+      ];
+      for (const cat of defaultCategories) {
+        await client.query(
+          "INSERT INTO categories (category_name) VALUES ($1) ON CONFLICT (category_name) DO NOTHING",
+          [cat]
+        );
+      }
+    } catch (catErr) {
+      console.warn("Categories seed notice:", catErr.message);
     }
 
     // 4. Ensure default Administrator account exists
