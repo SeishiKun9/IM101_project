@@ -24,6 +24,12 @@ import {
   setAuditContext,
 } from "./services/audit.js";
 import { runMigrations } from "../../db/migrate.js";
+import {
+  validatePhilippinePhone,
+  validateName,
+  validatePassword,
+  validateSchoolEmail,
+} from "./utils/validation.js";
 
 const { Pool } = pg;
 const app = express();
@@ -272,11 +278,21 @@ app.post(
       accountType = "client",
       setupToken = "",
     } = req.body;
-    if (!name || !email || !password || password.length < 6)
-      return res.status(400).json({
-        error:
-          "Name, school email, and a password of at least 6 characters are required.",
-      });
+    const nameVal = validateName(name);
+    if (!nameVal.valid) {
+      return res.status(400).json({ error: nameVal.error });
+    }
+
+    const emailVal = validateSchoolEmail(email, { requireSchoolDomain: true });
+    if (!emailVal.valid) {
+      return res.status(400).json({ error: emailVal.error });
+    }
+
+    const passVal = validatePassword(password);
+    if (!passVal.valid) {
+      return res.status(400).json({ error: passVal.error });
+    }
+
     if (!["client", "admin"].includes(accountType))
       return res.status(400).json({ error: "Choose Client or Administrator." });
     if (
@@ -287,14 +303,9 @@ app.post(
         error:
           "Administrator registration requires a valid setup authorization.",
       });
-    const normalizedEmail = String(email).trim().toLowerCase();
-    if (
-      !normalizedEmail.endsWith(".edu") &&
-      !normalizedEmail.endsWith(".edu.ph")
-    )
-      return res
-        .status(400)
-        .json({ error: "Please use your school email address." });
+
+    const normalizedEmail = emailVal.formatted;
+    const formattedName = nameVal.formatted;
     try {
       const role = accountType === "admin" ? "admin" : "student";
       let baseUsername = normalizedEmail.split("@")[0].replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 45) || "user";
@@ -306,7 +317,7 @@ app.post(
 
       const result = await pool.query(
         "INSERT INTO users (name, email, username, password_hash, role) VALUES ($1, $2, $3, $4, $5) RETURNING user_id, name, email, username, password_hash, role",
-        [name.trim(), normalizedEmail, username, hashPassword(password), role],
+        [formattedName, normalizedEmail, username, hashPassword(password), role],
       );
       res.status(201).json(await startSession(result.rows[0]));
     } catch (error) {
@@ -403,11 +414,15 @@ app.post(
   requireDatabase,
   asyncRoute(async (req, res) => {
     const { token, password } = req.body;
-    if (!token || !password || password.length < 6)
+    if (!token || typeof token !== "string" || !token.trim()) {
       return res.status(400).json({
-        error:
-          "A reset token and password of at least 6 characters are required.",
+        error: "A valid security reset token is required.",
       });
+    }
+    const passVal = validatePassword(password);
+    if (!passVal.valid) {
+      return res.status(400).json({ error: passVal.error });
+    }
     const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
     const result = await pool.query(
       "UPDATE users SET password_hash = $1, password_reset_token_hash = NULL, password_reset_expires_at = NULL WHERE password_reset_token_hash = $2 AND password_reset_expires_at > now() RETURNING user_id",
@@ -1406,10 +1421,28 @@ app.post(
   requireRole("admin"),
   asyncRoute(async (req, res) => {
     const { name, email, password, role, setupToken = "" } = req.body;
-    if (!name || !email || !password || (role !== "staff" && role !== "admin"))
+    if (role !== "staff" && role !== "admin") {
       return res.status(400).json({
         error: "Administrators can provision Verifier or Administrator accounts only.",
       });
+    }
+
+    const nameVal = validateName(name);
+    if (!nameVal.valid) {
+      return res.status(400).json({ error: nameVal.error });
+    }
+
+    const emailVal = validateSchoolEmail(email, {
+      requireSchoolDomain: role === "admin",
+    });
+    if (!emailVal.valid) {
+      return res.status(400).json({ error: emailVal.error });
+    }
+
+    const passVal = validatePassword(password);
+    if (!passVal.valid) {
+      return res.status(400).json({ error: passVal.error });
+    }
 
     if (
       role === "admin" &&
@@ -1420,16 +1453,8 @@ app.post(
       });
     }
 
-    const normalizedEmail = String(email).trim().toLowerCase();
-    if (
-      role === "admin" &&
-      !normalizedEmail.endsWith(".edu") &&
-      !normalizedEmail.endsWith(".edu.ph")
-    ) {
-      return res.status(400).json({
-        error: "Please use your school email address (.edu or .edu.ph).",
-      });
-    }
+    const normalizedEmail = emailVal.formatted;
+    const formattedName = nameVal.formatted;
 
     const client = await pool.connect();
     try {
@@ -1439,7 +1464,7 @@ app.post(
       const username = email.split("@")[0].toLowerCase().replace(/[^a-z0-9_]/g, "_");
       const result = await client.query(
         "INSERT INTO users (name, email, username, password_hash, role) VALUES ($1, $2, $3, $4, $5) RETURNING user_id, name, email, username, password_hash, role",
-        [name, email.toLowerCase(), username, hashPassword(password), role],
+        [formattedName, normalizedEmail, username, hashPassword(password), role],
       );
 
       const roleLabel = role === "admin" ? "administrator" : "verifier";
@@ -1564,19 +1589,18 @@ app.put(
   requireRole("admin"),
   asyncRoute(async (req, res) => {
     const { name, email, isActive } = req.body;
-    if (!name || !email) {
-      return res.status(400).json({ error: "Name and email are required." });
+    const nameVal = validateName(name);
+    if (!nameVal.valid) {
+      return res.status(400).json({ error: nameVal.error });
     }
 
-    const normalizedEmail = String(email).trim().toLowerCase();
-    if (
-      !normalizedEmail.endsWith(".edu") &&
-      !normalizedEmail.endsWith(".edu.ph")
-    ) {
-      return res
-        .status(400)
-        .json({ error: "Please use a valid campus institutional email address (.edu or .edu.ph)." });
+    const emailVal = validateSchoolEmail(email, { requireSchoolDomain: true });
+    if (!emailVal.valid) {
+      return res.status(400).json({ error: emailVal.error });
     }
+
+    const normalizedEmail = emailVal.formatted;
+    const formattedName = nameVal.formatted;
 
     if (isActive === false && Number(req.params.userId) === Number(req.user.id)) {
       return res
@@ -1606,14 +1630,14 @@ app.put(
          SET name = $1, email = $2, is_active = $3, updated_at = now()
          WHERE user_id = $4
          RETURNING user_id AS id, name, email, role, is_active AS "isActive"`,
-        [name.trim(), normalizedEmail, targetActive, req.params.userId],
+        [formattedName, normalizedEmail, targetActive, req.params.userId],
       );
 
       if (!targetActive) {
         invalidateSessionsForUser(req.params.userId);
       } else {
         updateSessionsForUser(req.params.userId, {
-          name: name.trim(),
+          name: formattedName,
           email: normalizedEmail,
         });
       }

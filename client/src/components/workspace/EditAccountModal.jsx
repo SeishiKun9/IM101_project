@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { apiRequest } from "../../api/client.js";
+import { validateName, validateSchoolEmail } from "../../utils/validation.js";
 
 export default function EditAccountModal({
   user,
@@ -31,14 +32,29 @@ export default function EditAccountModal({
     e.preventDefault();
     setError("");
     setSuccess("");
+
+    const nameVal = validateName(name);
+    if (!nameVal.valid) {
+      setError(nameVal.error);
+      return;
+    }
+
+    const emailVal = validateSchoolEmail(email, {
+      requireSchoolDomain: user.role === "admin",
+    });
+    if (!emailVal.valid) {
+      setError(emailVal.error);
+      return;
+    }
+
     setLoading(true);
 
     try {
       const updated = await apiRequest(`/admin/users/${user.id}`, {
         method: "PUT",
         body: JSON.stringify({
-          name: name.trim(),
-          email: email.trim().toLowerCase(),
+          name: nameVal.formatted,
+          email: emailVal.formatted,
           isActive,
         }),
       });

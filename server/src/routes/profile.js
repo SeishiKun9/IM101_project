@@ -1,6 +1,10 @@
 import express from "express";
 import { logAdminAudit } from "../services/audit.js";
-import { validatePhilippinePhone, validateName } from "../utils/validation.js";
+import {
+  validatePhilippinePhone,
+  validateName,
+  validatePassword,
+} from "../utils/validation.js";
 
 // Rate limiter for password change attempts: max 5 attempts per 15 minutes per user
 const passwordChangeAttempts = new Map();
@@ -277,16 +281,20 @@ export function createProfileRouter({
         return res.status(429).json({ error: rateCheck.error });
       }
 
-      if (!currentPassword) {
+      if (!currentPassword || typeof currentPassword !== "string") {
         return res
           .status(400)
           .json({ error: "Current password is required." });
       }
-      if (!newPassword || newPassword.length < 6) {
-        return res.status(400).json({
-          error: "New password must be at least 6 characters long.",
-        });
+
+      const passVal = validatePassword(newPassword, {
+        isChange: true,
+        currentPassword,
+      });
+      if (!passVal.valid) {
+        return res.status(400).json({ error: passVal.error });
       }
+
       if (newPassword !== confirmPassword) {
         return res.status(400).json({
           error: "New password and confirmation do not match.",

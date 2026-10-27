@@ -1,5 +1,10 @@
 import React, { useState } from "react";
 import { apiRequest } from "../../api/client.js";
+import {
+  validateName,
+  validateSchoolEmail,
+  validatePassword,
+} from "../../utils/validation.js";
 
 export default function AdminAccountForm() {
   const [verifierMessage, setVerifierMessage] = useState("");
@@ -14,16 +19,40 @@ export default function AdminAccountForm() {
     event.preventDefault();
     setVerifierMessage("");
     setVerifierError("");
-    setVerifierSubmitting(true);
     const form = event.currentTarget;
+    const data = Object.fromEntries(new FormData(form));
+
+    const nameVal = validateName(data.name);
+    if (!nameVal.valid) {
+      setVerifierError(nameVal.error);
+      return;
+    }
+
+    const emailVal = validateSchoolEmail(data.email, { requireSchoolDomain: false });
+    if (!emailVal.valid) {
+      setVerifierError(emailVal.error);
+      return;
+    }
+
+    const passVal = validatePassword(data.password);
+    if (!passVal.valid) {
+      setVerifierError(passVal.error);
+      return;
+    }
+
+    setVerifierSubmitting(true);
     try {
-      const data = Object.fromEntries(new FormData(form));
       await apiRequest("/admin/accounts", {
         method: "POST",
-        body: JSON.stringify({ ...data, role: "staff" }),
+        body: JSON.stringify({
+          ...data,
+          name: nameVal.formatted,
+          email: emailVal.formatted,
+          role: "staff",
+        }),
       });
       form.reset();
-      setVerifierMessage(`Verifier / CSA staff account for "${data.name}" was created successfully.`);
+      setVerifierMessage(`Verifier / CSA staff account for "${nameVal.formatted}" was created successfully.`);
     } catch (requestError) {
       setVerifierError(requestError.message);
     } finally {
@@ -35,16 +64,45 @@ export default function AdminAccountForm() {
     event.preventDefault();
     setAdminMessage("");
     setAdminError("");
-    setAdminSubmitting(true);
     const form = event.currentTarget;
+    const data = Object.fromEntries(new FormData(form));
+
+    const nameVal = validateName(data.name);
+    if (!nameVal.valid) {
+      setAdminError(nameVal.error);
+      return;
+    }
+
+    const emailVal = validateSchoolEmail(data.email, { requireSchoolDomain: true });
+    if (!emailVal.valid) {
+      setAdminError(emailVal.error);
+      return;
+    }
+
+    const passVal = validatePassword(data.password);
+    if (!passVal.valid) {
+      setAdminError(passVal.error);
+      return;
+    }
+
+    if (!data.setupToken || !data.setupToken.trim()) {
+      setAdminError("Administrator setup authorization token is required.");
+      return;
+    }
+
+    setAdminSubmitting(true);
     try {
-      const data = Object.fromEntries(new FormData(form));
       await apiRequest("/admin/accounts", {
         method: "POST",
-        body: JSON.stringify({ ...data, role: "admin" }),
+        body: JSON.stringify({
+          ...data,
+          name: nameVal.formatted,
+          email: emailVal.formatted,
+          role: "admin",
+        }),
       });
       form.reset();
-      setAdminMessage(`Administrator account for "${data.name}" was created successfully with full privileges.`);
+      setAdminMessage(`Administrator account for "${nameVal.formatted}" was created successfully with full privileges.`);
     } catch (requestError) {
       setAdminError(requestError.message);
     } finally {
@@ -133,12 +191,12 @@ export default function AdminAccountForm() {
                 id="staff-password"
                 name="password"
                 type="password"
-                minLength={6}
-                placeholder="Minimum 6 characters"
+                minLength={8}
+                placeholder="Minimum 8 chars (upper, lower, digit, symbol)"
                 required
               />
               <span className="field-hint">
-                Staff will use this password to sign in to the Verifier workspace.
+                Staff temporary password. Must be at least 8 characters with uppercase, lowercase, number, and special symbol.
               </span>
             </div>
           </div>
@@ -234,12 +292,12 @@ export default function AdminAccountForm() {
                 id="admin-password"
                 name="password"
                 type="password"
-                minLength={6}
-                placeholder="Minimum 6 characters"
+                minLength={8}
+                placeholder="Minimum 8 chars (upper, lower, digit, symbol)"
                 required
               />
               <span className="field-hint">
-                Password must be at least 6 characters in length.
+                Administrator password. Must be at least 8 characters with uppercase, lowercase, number, and special symbol.
               </span>
             </div>
 

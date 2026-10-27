@@ -1,10 +1,16 @@
 import React, { useState } from "react";
 import { apiRequest } from "../api/client.js";
+import PasswordRequirements from "./PasswordRequirements.jsx";
+import { validatePassword, validateSchoolEmail } from "../utils/validation.js";
 
 export default function ForgotPasswordModal({ onClose, onBack }) {
   const [email, setEmail] = useState("");
   const [token, setToken] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -13,11 +19,18 @@ export default function ForgotPasswordModal({ onClose, onBack }) {
     event.preventDefault();
     setError("");
     setMessage("");
+
+    const emailVal = validateSchoolEmail(email, { requireSchoolDomain: false });
+    if (!emailVal.valid) {
+      setError(emailVal.error);
+      return;
+    }
+
     setSubmitting(true);
     try {
       const result = await apiRequest("/auth/forgot-password", {
         method: "POST",
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email: email.trim().toLowerCase() }),
       });
       setMessage(result.message);
       if (result.resetToken) setToken(result.resetToken);
@@ -32,15 +45,33 @@ export default function ForgotPasswordModal({ onClose, onBack }) {
     event.preventDefault();
     setError("");
     setMessage("");
+
+    if (!token.trim()) {
+      setError("Please provide the security reset token.");
+      return;
+    }
+
+    const passVal = validatePassword(password);
+    if (!passVal.valid) {
+      setError(passVal.error);
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      setError("Passwords do not match. Please re-enter your password.");
+      return;
+    }
+
     setSubmitting(true);
     try {
       const result = await apiRequest("/auth/reset-password", {
         method: "POST",
-        body: JSON.stringify({ token, password }),
+        body: JSON.stringify({ token: token.trim(), password }),
       });
       setMessage(result.message);
       setToken("");
       setPassword("");
+      setConfirmPassword("");
     } catch (requestError) {
       setError(requestError.message);
     } finally {
@@ -87,7 +118,7 @@ export default function ForgotPasswordModal({ onClose, onBack }) {
         )}
 
         {!token ? (
-          <form className="auth-form" onSubmit={requestReset}>
+          <form className="auth-form" onSubmit={requestReset} noValidate>
             <div className="form-group">
               <label htmlFor="recovery-email">
                 Campus Email <span className="req">*</span>
@@ -111,7 +142,7 @@ export default function ForgotPasswordModal({ onClose, onBack }) {
             </button>
           </form>
         ) : (
-          <form className="auth-form" onSubmit={resetPassword}>
+          <form className="auth-form" onSubmit={resetPassword} noValidate>
             <div className="form-group">
               <label htmlFor="reset-token">
                 Security Reset Token <span className="req">*</span>
@@ -129,15 +160,59 @@ export default function ForgotPasswordModal({ onClose, onBack }) {
               <label htmlFor="reset-new-password">
                 New Password <span className="req">*</span>
               </label>
-              <input
-                id="reset-new-password"
-                type="password"
-                minLength={6}
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                required
-                placeholder="Minimum 6 characters"
+              <div className="password-input-group">
+                <input
+                  id="reset-new-password"
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  required
+                  placeholder="Choose a strong new password"
+                  autoComplete="new-password"
+                />
+                <button
+                  type="button"
+                  className="password-toggle-btn"
+                  onClick={() => setShowPassword(!showPassword)}
+                  tabIndex="-1"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? "Hide" : "Show"}
+                </button>
+              </div>
+              <PasswordRequirements
+                password={password}
+                confirmPassword={confirmPassword}
+                showMatch={Boolean(confirmPassword)}
               />
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="reset-confirm-password">
+                Confirm New Password <span className="req">*</span>
+              </label>
+              <div className="password-input-group">
+                <input
+                  id="reset-confirm-password"
+                  type={showConfirmPassword ? "text" : "password"}
+                  value={confirmPassword}
+                  onChange={(event) => setConfirmPassword(event.target.value)}
+                  required
+                  placeholder="Re-enter your new password"
+                  autoComplete="new-password"
+                />
+                <button
+                  type="button"
+                  className="password-toggle-btn"
+                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  tabIndex="-1"
+                  aria-label={
+                    showConfirmPassword ? "Hide password" : "Show password"
+                  }
+                >
+                  {showConfirmPassword ? "Hide" : "Show"}
+                </button>
+              </div>
             </div>
 
             <button

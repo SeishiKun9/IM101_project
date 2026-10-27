@@ -1,5 +1,11 @@
 import React, { useState } from "react";
 import { useAuth } from "../context/AuthContext.jsx";
+import PasswordRequirements from "./PasswordRequirements.jsx";
+import {
+  validateName,
+  validateSchoolEmail,
+  validatePassword,
+} from "../utils/validation.js";
 
 export default function AuthModal({
   mode = "signin",
@@ -13,19 +19,83 @@ export default function AuthModal({
   const [busy, setBusy] = useState(false);
   const [accountType, setAccountType] = useState("client");
 
+  // Form states
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [setupToken, setSetupToken] = useState("");
+
+  // Visibility toggles
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
+  function resetForm() {
+    setError("");
+    setPassword("");
+    setConfirmPassword("");
+    setSetupToken("");
+  }
+
   async function submit(event) {
     event.preventDefault();
-    setBusy(true);
     setError("");
-    const form = Object.fromEntries(new FormData(event.currentTarget));
-    const payload = { ...form, accountType };
+
+    if (mode === "signup") {
+      // 1. Validate full name
+      const nameVal = validateName(name);
+      if (!nameVal.valid) {
+        setError(nameVal.error);
+        return;
+      }
+
+      // 2. Validate institutional email
+      const emailVal = validateSchoolEmail(email, { requireSchoolDomain: true });
+      if (!emailVal.valid) {
+        setError(emailVal.error);
+        return;
+      }
+
+      // 3. Validate password complexity
+      const passVal = validatePassword(password);
+      if (!passVal.valid) {
+        setError(passVal.error);
+        return;
+      }
+
+      // 4. Validate password confirmation
+      if (password !== confirmPassword) {
+        setError("Passwords do not match. Please re-enter your password.");
+        return;
+      }
+
+      // 5. Validate admin setup token
+      if (accountType === "admin" && !setupToken.trim()) {
+        setError("Administrator setup authorization token is required.");
+        return;
+      }
+    } else {
+      if (!email.trim() || !password) {
+        setError("Please enter your campus email and password.");
+        return;
+      }
+    }
+
+    setBusy(true);
+    const payload = {
+      name: name.trim(),
+      email: email.trim().toLowerCase(),
+      password,
+      accountType,
+      setupToken: setupToken.trim(),
+    };
 
     try {
       let savedUser;
       if (mode === "signup") {
         savedUser = await register(payload);
       } else {
-        savedUser = await login(payload);
+        savedUser = await login({ email: email.trim(), password });
       }
       onSuccess(savedUser);
     } catch (requestError) {
@@ -67,7 +137,7 @@ export default function AuthModal({
             className={`auth-tab ${mode === "signin" ? "active" : ""}`}
             onClick={() => {
               setMode("signin");
-              setError("");
+              resetForm();
             }}
             type="button"
           >
@@ -77,7 +147,7 @@ export default function AuthModal({
             className={`auth-tab ${mode === "signup" ? "active" : ""}`}
             onClick={() => {
               setMode("signup");
-              setError("");
+              resetForm();
             }}
             type="button"
           >
@@ -91,7 +161,7 @@ export default function AuthModal({
           </div>
         )}
 
-        <form className="auth-form" onSubmit={submit}>
+        <form className="auth-form" onSubmit={submit} noValidate>
           {mode === "signup" && (
             <>
               <div className="form-group">
@@ -102,6 +172,8 @@ export default function AuthModal({
                   id="reg-name"
                   name="name"
                   required
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
                   placeholder="e.g. Maria Santos"
                   autoComplete="name"
                 />
@@ -130,6 +202,8 @@ export default function AuthModal({
                     name="setupToken"
                     type="password"
                     required
+                    value={setupToken}
+                    onChange={(e) => setSetupToken(e.target.value)}
                     autoComplete="off"
                     placeholder="Enter setup authorization token"
                   />
@@ -150,9 +224,20 @@ export default function AuthModal({
               name="email"
               type="email"
               required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
               autoComplete="email"
-              placeholder="name@school.edu"
+              placeholder={
+                mode === "signup"
+                  ? "student@school.edu.ph"
+                  : "name@school.edu.ph or username"
+              }
             />
+            {mode === "signup" && (
+              <span className="field-hint">
+                Must be your institutional school email (.edu or .edu.ph).
+              </span>
+            )}
           </div>
 
           <div className="form-group">
@@ -166,18 +251,70 @@ export default function AuthModal({
                 </button>
               )}
             </div>
-            <input
-              id="auth-password"
-              name="password"
-              type="password"
-              minLength={6}
-              required
-              autoComplete={
-                mode === "signup" ? "new-password" : "current-password"
-              }
-              placeholder="••••••••"
-            />
+
+            <div className="password-input-group">
+              <input
+                id="auth-password"
+                name="password"
+                type={showPassword ? "text" : "password"}
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete={
+                  mode === "signup" ? "new-password" : "current-password"
+                }
+                placeholder="••••••••"
+              />
+              <button
+                type="button"
+                className="password-toggle-btn"
+                onClick={() => setShowPassword(!showPassword)}
+                tabIndex="-1"
+                aria-label={showPassword ? "Hide password" : "Show password"}
+              >
+                {showPassword ? "Hide" : "Show"}
+              </button>
+            </div>
+
+            {mode === "signup" && (
+              <PasswordRequirements
+                password={password}
+                confirmPassword={confirmPassword}
+                showMatch={Boolean(confirmPassword)}
+              />
+            )}
           </div>
+
+          {mode === "signup" && (
+            <div className="form-group">
+              <label htmlFor="reg-confirm-password">
+                Confirm Password <span className="req">*</span>
+              </label>
+              <div className="password-input-group">
+                <input
+                  id="reg-confirm-password"
+                  name="confirmPassword"
+                  type={showConfirmPassword ? "text" : "password"}
+                  required
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  autoComplete="new-password"
+                  placeholder="Repeat your password"
+                />
+                <button
+                  type="button"
+                  className="password-toggle-btn"
+                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  tabIndex="-1"
+                  aria-label={
+                    showConfirmPassword ? "Hide password" : "Show password"
+                  }
+                >
+                  {showConfirmPassword ? "Hide" : "Show"}
+                </button>
+              </div>
+            </div>
+          )}
 
           <button
             className="btn btn-primary btn-lg full"

@@ -1,1 +1,159 @@
-/* Styles unified into styles.css */
+/* ==========================================================================
+   Campus Lost & Found - Password & Input Validation Styles
+   ========================================================================== */
+
+/* Password Feedback & Real-Time Validation */
+.password-feedback-panel {
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: var(--surface-alt, #fbfdfb);
+  border: 1px solid var(--border-subtle, #edf1ec);
+  border-radius: 8px;
+  font-size: 0.8125rem;
+  transition: all 0.2s ease;
+}
+
+.password-meter-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.password-meter-bar-bg {
+  flex: 1;
+  height: 6px;
+  background: var(--border, #e1e7e0);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.password-meter-bar {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.3s ease, background-color 0.3s ease;
+}
+
+.password-meter-bar.strength-weak {
+  background-color: #ef4444;
+}
+
+.password-meter-bar.strength-fair {
+  background-color: #f59e0b;
+}
+
+.password-meter-bar.strength-good {
+  background-color: #3b82f6;
+}
+
+.password-meter-bar.strength-strong {
+  background-color: #10b981;
+}
+
+.password-meter-label {
+  font-weight: 700;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  min-width: 52px;
+  text-align: right;
+}
+
+.password-meter-label.strength-weak {
+  color: #dc2626;
+}
+
+.password-meter-label.strength-fair {
+  color: #d97706;
+}
+
+.password-meter-label.strength-good {
+  color: #2563eb;
+}
+
+.password-meter-label.strength-strong {
+  color: #059669;
+}
+
+.password-checklist {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 5px;
+}
+
+@media (min-width: 480px) {
+  .password-checklist {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.password-req-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  transition: color 0.15s ease;
+}
+
+.password-req-item.is-met {
+  color: #059669;
+  font-weight: 600;
+}
+
+.password-req-item.is-unmet {
+  color: var(--text-muted, #647067);
+}
+
+.password-req-item.is-pending {
+  color: var(--text-subtle, #8a978e);
+}
+
+.password-req-item .req-icon {
+  font-size: 0.8125rem;
+  line-height: 1;
+  display: inline-block;
+  width: 14px;
+  text-align: center;
+}
+
+.password-hint-text {
+  font-size: 0.75rem;
+  color: var(--text-muted, #647067);
+  margin-top: 4px;
+}
+
+/* Password Input With Visibility Toggle */
+.password-input-group {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.password-input-group input {
+  width: 100%;
+  padding-right: 50px !important;
+}
+
+.password-toggle-btn {
+  position: absolute;
+  right: 6px;
+  background: transparent;
+  border: none;
+  padding: 5px 8px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted, #647067);
+  cursor: pointer;
+  border-radius: 4px;
+  user-select: none;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.password-toggle-btn:hover {
+  color: var(--text-main, #17251c);
+  background: rgba(0, 0, 0, 0.05);
+}

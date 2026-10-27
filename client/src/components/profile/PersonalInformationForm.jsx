@@ -2,6 +2,10 @@ import React, { useState, useEffect } from "react";
 import { apiRequest } from "../../api/client.js";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { roleNames } from "../../constants/statuses.js";
+import {
+  validateName,
+  validatePhilippinePhone,
+} from "../../utils/validation.js";
 
 export default function PersonalInformationForm({ onProfileUpdated }) {
   const { user, setUser } = useAuth();
@@ -38,14 +42,27 @@ export default function PersonalInformationForm({ onProfileUpdated }) {
 
     setError("");
     setSuccessMessage("");
+
+    const nameVal = validateName(name);
+    if (!nameVal.valid) {
+      setError(nameVal.error);
+      return;
+    }
+
+    const phoneVal = validatePhilippinePhone(contactNumber);
+    if (!phoneVal.valid) {
+      setError(phoneVal.error);
+      return;
+    }
+
     setSaving(true);
 
     try {
       const updated = await apiRequest("/profile", {
         method: "PATCH",
         body: JSON.stringify({
-          name: name.trim(),
-          contactNumber: contactNumber.trim() || null,
+          name: nameVal.formatted,
+          contactNumber: phoneVal.formatted,
         }),
       });
 

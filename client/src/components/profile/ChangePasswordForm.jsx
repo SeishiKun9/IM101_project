@@ -1,6 +1,8 @@
 import React, { useState } from "react";
 import { apiRequest } from "../../api/client.js";
 import { useAuth } from "../../context/AuthContext.jsx";
+import PasswordRequirements from "../PasswordRequirements.jsx";
+import { validatePassword } from "../../utils/validation.js";
 
 export default function ChangePasswordForm({ onPasswordChanged }) {
   const { logout } = useAuth();
@@ -12,6 +14,11 @@ export default function ChangePasswordForm({ onPasswordChanged }) {
   const [error, setError] = useState("");
   const [successNotice, setSuccessNotice] = useState(false);
 
+  // Visibility toggles
+  const [showCurrent, setShowCurrent] = useState(false);
+  const [showNew, setShowNew] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
@@ -20,10 +27,16 @@ export default function ChangePasswordForm({ onPasswordChanged }) {
       setError("Please enter your current password.");
       return;
     }
-    if (newPassword.length < 6) {
-      setError("New password must be at least 6 characters long.");
+
+    const passVal = validatePassword(newPassword, {
+      isChange: true,
+      currentPassword,
+    });
+    if (!passVal.valid) {
+      setError(passVal.error);
       return;
     }
+
     if (newPassword !== confirmPassword) {
       setError("New password and confirmation password do not match.");
       return;
@@ -82,23 +95,34 @@ export default function ChangePasswordForm({ onPasswordChanged }) {
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="profile-form">
+      <form onSubmit={handleSubmit} className="profile-form" noValidate>
         <div className="profile-form-grid">
           {/* Current Password */}
           <div className="form-group">
             <label htmlFor="current-password">
               Current Password <span className="req">*</span>
             </label>
-            <input
-              id="current-password"
-              type="password"
-              required
-              value={currentPassword}
-              onChange={(e) => setCurrentPassword(e.target.value)}
-              placeholder="Enter your existing password"
-              disabled={saving || successNotice}
-              autoComplete="current-password"
-            />
+            <div className="password-input-group">
+              <input
+                id="current-password"
+                type={showCurrent ? "text" : "password"}
+                required
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                placeholder="Enter your existing password"
+                disabled={saving || successNotice}
+                autoComplete="current-password"
+              />
+              <button
+                type="button"
+                className="password-toggle-btn"
+                onClick={() => setShowCurrent(!showCurrent)}
+                tabIndex="-1"
+                aria-label={showCurrent ? "Hide password" : "Show password"}
+              >
+                {showCurrent ? "Hide" : "Show"}
+              </button>
+            </div>
           </div>
 
           <div className="form-group-empty" />
@@ -108,20 +132,32 @@ export default function ChangePasswordForm({ onPasswordChanged }) {
             <label htmlFor="new-password">
               New Password <span className="req">*</span>
             </label>
-            <input
-              id="new-password"
-              type="password"
-              required
-              minLength={6}
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              placeholder="At least 6 characters"
-              disabled={saving || successNotice}
-              autoComplete="new-password"
+            <div className="password-input-group">
+              <input
+                id="new-password"
+                type={showNew ? "text" : "password"}
+                required
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="Choose a strong new password"
+                disabled={saving || successNotice}
+                autoComplete="new-password"
+              />
+              <button
+                type="button"
+                className="password-toggle-btn"
+                onClick={() => setShowNew(!showNew)}
+                tabIndex="-1"
+                aria-label={showNew ? "Hide password" : "Show password"}
+              >
+                {showNew ? "Hide" : "Show"}
+              </button>
+            </div>
+            <PasswordRequirements
+              password={newPassword}
+              confirmPassword={confirmPassword}
+              showMatch={Boolean(confirmPassword)}
             />
-            <span className="field-hint">
-              Must be at least 6 characters long. Choose a strong, unique passphrase.
-            </span>
           </div>
 
           {/* Confirm New Password */}
@@ -129,17 +165,27 @@ export default function ChangePasswordForm({ onPasswordChanged }) {
             <label htmlFor="confirm-new-password">
               Confirm New Password <span className="req">*</span>
             </label>
-            <input
-              id="confirm-new-password"
-              type="password"
-              required
-              minLength={6}
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              placeholder="Re-enter your new password"
-              disabled={saving || successNotice}
-              autoComplete="new-password"
-            />
+            <div className="password-input-group">
+              <input
+                id="confirm-new-password"
+                type={showConfirm ? "text" : "password"}
+                required
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="Re-enter your new password"
+                disabled={saving || successNotice}
+                autoComplete="new-password"
+              />
+              <button
+                type="button"
+                className="password-toggle-btn"
+                onClick={() => setShowConfirm(!showConfirm)}
+                tabIndex="-1"
+                aria-label={showConfirm ? "Hide password" : "Show password"}
+              >
+                {showConfirm ? "Hide" : "Show"}
+              </button>
+            </div>
             <span className="field-hint">
               Must match the new password above exactly.
             </span>
