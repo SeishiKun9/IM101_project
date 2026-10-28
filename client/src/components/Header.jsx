@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import { apiRequest } from "../api/client.js";
 import { roleNames } from "../constants/statuses.js";
@@ -13,6 +14,17 @@ export default function Header({ onAuth }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [campusLogo, setCampusLogo] = useState(null);
   const [logoLoadError, setLogoLoadError] = useState(false);
+
+  useEffect(() => {
+    if (mobileMenuOpen) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "";
+    }
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [mobileMenuOpen]);
 
   useEffect(() => {
     let isMounted = true;
@@ -214,8 +226,10 @@ export default function Header({ onAuth }) {
       </div>
 
       {/* Mobile Drawer Navigation */}
-      {mobileMenuOpen && (
-        <div className="mobile-drawer" role="dialog" aria-modal="true">
+      {mobileMenuOpen &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div className="mobile-drawer" role="dialog" aria-modal="true">
           <div className="mobile-drawer-backdrop" onClick={closeMobile} />
           <nav className="mobile-drawer-content" aria-label="Mobile Navigation">
             <div className="mobile-drawer-header">
@@ -338,7 +352,8 @@ export default function Header({ onAuth }) {
               )}
             </div>
           </nav>
-        </div>
+        </div>,
+        document.body,
       )}
     </header>
   );

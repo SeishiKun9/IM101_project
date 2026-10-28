@@ -28,6 +28,17 @@ export default function ReviewWorkspace({ user, onChanged }) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
+  useEffect(() => {
+    if (mobileNavOpen) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "";
+    }
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [mobileNavOpen]);
+
   async function refresh() {
     setRefreshing(true);
     try {

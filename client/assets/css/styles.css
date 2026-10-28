@@ -568,29 +568,40 @@ button.danger:hover:not(:disabled) {
 
 /* Mobile Drawer */
 .mobile-drawer {
-  position: fixed;
-  inset: 0;
-  z-index: 200;
-  display: flex;
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 10000 !important;
+  display: flex !important;
+  height: 100vh !important;
+  height: 100dvh !important;
+  width: 100vw !important;
+  pointer-events: auto !important;
 }
 
 .mobile-drawer-backdrop {
-  position: absolute;
-  inset: 0;
-  background: rgba(23, 37, 28, 0.4);
-  backdrop-filter: blur(4px);
+  position: fixed !important;
+  inset: 0 !important;
+  background: rgba(0, 0, 0, 0.7) !important;
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
+  z-index: 1 !important;
 }
 
 .mobile-drawer-content {
-  position: relative;
-  width: min(85vw, 320px);
-  height: 100%;
-  background: var(--surface);
-  box-shadow: var(--shadow-xl);
-  display: flex;
-  flex-direction: column;
-  padding: 24px;
-  z-index: 1;
+  position: relative !important;
+  width: min(85vw, 320px) !important;
+  height: 100% !important;
+  max-height: 100dvh !important;
+  background: var(--surface) !important;
+  background-color: var(--surface) !important;
+  border-right: 1px solid var(--border) !important;
+  box-shadow: 0 0 50px rgba(0, 0, 0, 0.6) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  padding: 24px !important;
+  z-index: 2 !important;
+  overflow-y: auto !important;
+  -webkit-overflow-scrolling: touch;
 }
 
 .mobile-drawer-header {
@@ -2421,38 +2432,14 @@ button.danger:hover:not(:disabled) {
   align-items: start;
 }
 
-@media (max-width: 900px) {
-  .workspace-main-split {
-    grid-template-columns: 1fr;
-  }
-  .workspace-mobile-toggle {
-    display: flex;
-  }
-  .workspace-sidebar {
-    position: fixed;
-    top: 0;
-    left: -280px;
-    bottom: 0;
-    width: 260px;
-    background: var(--surface);
-    z-index: 500;
-    padding: 24px;
-    box-shadow: var(--shadow-xl);
-    transition: left 0.25s ease;
-  }
-  .workspace-sidebar.open {
-    left: 0;
-  }
-  .sidebar-header-mobile {
-    display: flex !important;
-  }
-  .sidebar-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(23, 37, 28, 0.4);
-    backdrop-filter: blur(4px);
-    z-index: 499;
-  }
+.workspace-sidebar {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  box-shadow: var(--shadow-xs);
+  position: sticky;
+  top: 90px;
 }
 
 .sidebar-header-mobile {
@@ -2465,14 +2452,50 @@ button.danger:hover:not(:disabled) {
   font-weight: 700;
 }
 
-.workspace-sidebar {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  padding: 12px;
-  box-shadow: var(--shadow-xs);
-  position: sticky;
-  top: 90px;
+@media (max-width: 900px) {
+  .workspace-main-split {
+    grid-template-columns: 1fr;
+  }
+  .workspace-mobile-toggle {
+    display: flex;
+  }
+  .workspace-sidebar {
+    position: fixed !important;
+    top: 0 !important;
+    left: -320px !important;
+    bottom: 0 !important;
+    width: 280px !important;
+    max-width: 85vw !important;
+    height: 100vh !important;
+    height: 100dvh !important;
+    background: var(--surface) !important;
+    background-color: var(--surface) !important;
+    z-index: 9999 !important;
+    padding: 24px !important;
+    box-shadow: 0 0 35px rgba(0, 0, 0, 0.6) !important;
+    border-radius: 0 !important;
+    border: none !important;
+    border-right: 1px solid var(--border) !important;
+    transition: left 0.25s cubic-bezier(0.16, 1, 0.3, 1) !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch;
+  }
+  .workspace-sidebar.open {
+    left: 0 !important;
+  }
+  .sidebar-header-mobile {
+    display: flex !important;
+  }
+  .sidebar-backdrop {
+    position: fixed !important;
+    inset: 0 !important;
+    background: rgba(0, 0, 0, 0.65) !important;
+    backdrop-filter: blur(6px) !important;
+    -webkit-backdrop-filter: blur(6px) !important;
+    z-index: 9998 !important;
+  }
 }
 
 .workspace-nav-list {

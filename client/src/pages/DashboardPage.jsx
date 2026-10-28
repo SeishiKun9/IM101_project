@@ -327,6 +327,9 @@ export default function DashboardPage({
                 onChange={(e) => setSort?.(e.target.value)}
                 aria-label="Sort reports"
               >
+                {search && search.trim() && (
+                  <option value="relevance">Sort: Most Relevant (Search)</option>
+                )}
                 <option value="newest">Sort: Newest First</option>
                 <option value="oldest">Sort: Oldest First</option>
                 <option value="title_asc">Sort: Title (A-Z)</option>
@@ -525,9 +528,11 @@ export default function DashboardPage({
               </div>
               <h3>No matching items found</h3>
               <p>
-                {hasActiveFilters
-                  ? "Try adjusting your search terms, widening your date range, or clearing filters to see more results."
-                  : "There are currently no public items reported in the registry."}
+                {search && search.trim()
+                  ? `No matching items found for "${search.trim()}". Check for typos or try searching by category, building, or description.`
+                  : hasActiveFilters
+                    ? "Try adjusting your search terms, widening your date range, or clearing filters to see more results."
+                    : "There are currently no public items reported in the registry."}
               </p>
               {hasActiveFilters && (
                 <button

@@ -103,6 +103,11 @@ export default function App() {
 
   function handleSearchChange(newSearch) {
     setSearch(newSearch);
+    if (newSearch.trim() && (sort === "newest" || !sort)) {
+      setSort("relevance");
+    } else if (!newSearch.trim() && sort === "relevance") {
+      setSort("newest");
+    }
     if (page !== 1) setPage(1);
   }
   function handleTypeChange(newType) {

@@ -64,6 +64,24 @@ const pool = process.env.DATABASE_URL
     })
   : null;
 
+// Track pg_trgm extension availability for fuzzy typo search (Item 7)
+let hasPgTrgm = false;
+if (pool) {
+  pool
+    .query("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+    .then(() => {
+      hasPgTrgm = true;
+    })
+    .catch(() => {
+      pool
+        .query("SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm'")
+        .then((res) => {
+          hasPgTrgm = (res.rows && res.rows.length > 0) || false;
+        })
+        .catch(() => {});
+    });
+}
+
 // Configure reverse proxy trust (Render HTTPS)
 app.set("trust proxy", 1);
 
@@ -842,16 +860,21 @@ app.get(
     const values = [];
     const where = [];
 
-    // 1. Multi-token Search across multiple fields (Item 7)
+    // 1. Enhanced PostgreSQL Full-Text Search + Trigram Fuzzy Search (Item 7)
+    let relevanceSelect = "";
     if (req.query.search) {
       const rawSearch = String(req.query.search).trim();
       if (rawSearch) {
-        // Split by whitespace to support multi-term searches (e.g. "laptop scanlon blue")
+        values.push(rawSearch);
+        const searchIdx = values.length;
+
+        // Substring token clauses for high-recall matching
         const tokens = rawSearch.split(/\s+/).filter(Boolean);
+        const tokenClauses = [];
         for (const token of tokens) {
           values.push(`%${token}%`);
           const idx = values.length;
-          where.push(`(
+          tokenClauses.push(`(
             i.title ILIKE $${idx} OR
             i.description ILIKE $${idx} OR
             c.category_name ILIKE $${idx} OR
@@ -861,6 +884,48 @@ app.get(
             i.location_snapshot->>'buildingName' ILIKE $${idx} OR
             i.location_snapshot->>'roomName' ILIKE $${idx}
           )`);
+        }
+
+        // Weighted Full-Text Search vector across Title ('A'), Category & Location ('B'), and Description ('C')
+        const ftsVector = `(
+          setweight(to_tsvector('english', COALESCE(i.title, '')), 'A') ||
+          setweight(to_tsvector('english', COALESCE(c.category_name, '') || ' ' || COALESCE(b.name, '') || ' ' || COALESCE(r.name, '') || ' ' || COALESCE(i.location_snapshot->>'buildingName', '')), 'B') ||
+          setweight(to_tsvector('english', COALESCE(i.description, '') || ' ' || COALESCE(i.location_description, '')), 'C')
+        )`;
+
+        // Safe websearch query parser (handles phrases, ignores special characters without syntax errors)
+        const ftsQuery = `websearch_to_tsquery('english', $${searchIdx})`;
+
+        if (hasPgTrgm) {
+          // Trigram fuzzy similarity: catches spelling mistakes & typos (e.g., "iphne" -> "iphone", "tumler" -> "tumbler")
+          const trgmClause = `(
+            similarity(COALESCE(i.title, ''), $${searchIdx}) >= 0.22 OR
+            word_similarity($${searchIdx}, COALESCE(i.title, '')) >= 0.3 OR
+            word_similarity($${searchIdx}, COALESCE(i.description, '')) >= 0.35
+          )`;
+
+          where.push(`(
+            ${ftsVector} @@ ${ftsQuery} OR
+            ${trgmClause} OR
+            (${tokenClauses.length ? tokenClauses.join(" AND ") : "TRUE"})
+          )`);
+
+          relevanceSelect = `, (
+            COALESCE(ts_rank_cd(${ftsVector}, ${ftsQuery}), 0.0) * 3.0 +
+            COALESCE(similarity(COALESCE(i.title, ''), $${searchIdx}), 0.0) * 2.0 +
+            COALESCE(word_similarity($${searchIdx}, COALESCE(i.description, '')), 0.0)
+          ) AS "searchRelevance"`;
+        } else {
+          // Robust Full-Text Search + Multi-Token ILIKE fallback if pg_trgm is not loaded
+          where.push(`(
+            ${ftsVector} @@ ${ftsQuery} OR
+            (${tokenClauses.length ? tokenClauses.join(" AND ") : "TRUE"})
+          )`);
+
+          relevanceSelect = `, (
+            COALESCE(ts_rank_cd(${ftsVector}, ${ftsQuery}), 0.0) * 3.0 +
+            CASE WHEN i.title ILIKE $${searchIdx} THEN 2.0 ELSE 0.0 END
+          ) AS "searchRelevance"`;
         }
       }
     }
@@ -904,9 +969,12 @@ app.get(
 
     const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
-    // 7. Dynamic Sorting (Item 7)
+    // 7. Dynamic Sorting with Relevance Ranking (Item 7)
     let orderBySql = "ORDER BY i.date_reported DESC, i.created_at DESC";
-    if (req.query.sort === "oldest") {
+    if (req.query.search && (req.query.sort === "relevance" || !req.query.sort)) {
+      // Prioritize relevance ranking when search query is active
+      orderBySql = 'ORDER BY "searchRelevance" DESC, i.date_reported DESC, i.created_at DESC';
+    } else if (req.query.sort === "oldest") {
       orderBySql = "ORDER BY i.date_reported ASC, i.created_at ASC";
     } else if (req.query.sort === "title_asc") {
       orderBySql = "ORDER BY LOWER(i.title) ASC, i.created_at DESC";
@@ -934,7 +1002,7 @@ app.get(
     const offsetIdx = values.length;
 
     const result = await pool.query(
-      `SELECT ${publicItemFields} FROM items i ${itemLocationJoins} ${whereSql} ${orderBySql} LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+      `SELECT ${publicItemFields} ${relevanceSelect} FROM items i ${itemLocationJoins} ${whereSql} ${orderBySql} LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
       values,
     );
 

@@ -101,6 +101,10 @@ export async function runMigrations(customPool = null) {
     // 0. Ensure extensions & base schema
     try { await client.query("CREATE EXTENSION IF NOT EXISTS pgcrypto"); } catch {}
     try { await client.query("CREATE EXTENSION IF NOT EXISTS citext"); } catch {}
+    try { await client.query("CREATE EXTENSION IF NOT EXISTS pg_trgm"); } catch {}
+    try {
+      await client.query("CREATE INDEX IF NOT EXISTS idx_items_title_trgm ON items USING gin (title gin_trgm_ops)");
+    } catch {}
 
     // Check if foundational schema exists
     try {
