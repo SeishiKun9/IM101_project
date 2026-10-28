@@ -8,18 +8,13 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   async function checkAuth() {
-    const token = localStorage.getItem(tokenKey);
-    if (!token) {
-      setUser(null);
-      setLoading(false);
-      return;
-    }
-
     try {
       const { user: savedUser } = await apiRequest("/auth/me");
+      document.cookie = `campus_logged_in=true; path=/; max-age=${7 * 24 * 60 * 60}; SameSite=Lax`;
       setUser(savedUser);
     } catch {
       localStorage.removeItem(tokenKey);
+      document.cookie = "campus_logged_in=; path=/; max-age=0; SameSite=Lax";
       setUser(null);
     } finally {
       setLoading(false);
@@ -36,6 +31,7 @@ export function AuthProvider({ children }) {
       body: JSON.stringify(credentials),
     });
     localStorage.setItem(tokenKey, result.token);
+    document.cookie = `campus_logged_in=true; path=/; max-age=${7 * 24 * 60 * 60}; SameSite=Lax`;
     setUser(result.user);
     return result.user;
   }
@@ -46,6 +42,7 @@ export function AuthProvider({ children }) {
       body: JSON.stringify(payload),
     });
     localStorage.setItem(tokenKey, result.token);
+    document.cookie = `campus_logged_in=true; path=/; max-age=${7 * 24 * 60 * 60}; SameSite=Lax`;
     setUser(result.user);
     return result.user;
   }
@@ -57,6 +54,7 @@ export function AuthProvider({ children }) {
       console.warn("Logout request error:", error);
     }
     localStorage.removeItem(tokenKey);
+    document.cookie = "campus_logged_in=; path=/; max-age=0; SameSite=Lax";
     setUser(null);
   }
 

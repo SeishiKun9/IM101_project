@@ -72,6 +72,37 @@ app.use((req, res, next) => {
   next();
 });
 
+// CORS and Credential Headers for local development and authorized origins
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin) {
+    const isLocalhost =
+      origin.startsWith("http://localhost:") ||
+      origin.startsWith("http://127.0.0.1:") ||
+      origin.startsWith("https://localhost:") ||
+      origin.startsWith("https://127.0.0.1:");
+    const isAppUrl = process.env.APP_URL && origin === process.env.APP_URL;
+
+    if (isLocalhost || isAppUrl) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Access-Control-Allow-Credentials", "true");
+      res.setHeader(
+        "Access-Control-Allow-Methods",
+        "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+      );
+      res.setHeader(
+        "Access-Control-Allow-Headers",
+        "Content-Type, Authorization, X-Requested-With",
+      );
+    }
+  }
+
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(204);
+  }
+  next();
+});
+
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 app.use(express.static(path.join(__dirname, "../../client/dist")));
@@ -343,7 +374,69 @@ async function invalidateSessionsForUser(userId) {
   }
 }
 
-async function startSession(user, res = null) {
+function isRequestSecure(req) {
+  if (!req) {
+    return process.env.NODE_ENV === "production";
+  }
+  const host = String(
+    req.headers["x-forwarded-host"] || req.headers.host || req.hostname || "",
+  ).toLowerCase();
+  const isLocalhost =
+    host.includes("localhost") ||
+    host.includes("127.0.0.1") ||
+    host.includes("::1");
+  if (isLocalhost) return false;
+
+  return (
+    req.secure === true ||
+    req.protocol === "https" ||
+    String(req.headers["x-forwarded-proto"] || "").toLowerCase() === "https" ||
+    process.env.NODE_ENV === "production"
+  );
+}
+
+function setSessionCookies(res, token, req = null) {
+  if (!res || !res.cookie) return;
+  const isSecure = isRequestSecure(req);
+  const cookieOptions = {
+    secure: isSecure,
+    sameSite: "lax",
+    path: "/",
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+  };
+
+  // 1. Primary HttpOnly auth session cookie
+  res.cookie("campus_session", token, {
+    ...cookieOptions,
+    httpOnly: true,
+  });
+
+  // 2. Client-accessible companion cookie (visible in DevTools document.cookie & Inspect)
+  res.cookie("campus_logged_in", "true", {
+    ...cookieOptions,
+    httpOnly: false,
+  });
+}
+
+function clearSessionCookies(res, req = null) {
+  if (!res || !res.clearCookie) return;
+  const isSecure = isRequestSecure(req);
+  const clearOptions = {
+    path: "/",
+    sameSite: "lax",
+    secure: isSecure,
+  };
+  res.clearCookie("campus_session", {
+    ...clearOptions,
+    httpOnly: true,
+  });
+  res.clearCookie("campus_logged_in", {
+    ...clearOptions,
+    httpOnly: false,
+  });
+}
+
+async function startSession(user, res = null, req = null) {
   const token = crypto.randomBytes(32).toString("hex");
   const userData = safeUser(user);
   sessions.set(token, userData);
@@ -361,13 +454,7 @@ async function startSession(user, res = null) {
   }
 
   if (res && res.cookie) {
-    res.cookie("campus_session", token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production" || isRemoteDb,
-      sameSite: "lax",
-      path: "/",
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-    });
+    setSessionCookies(res, token, req);
   }
 
   return { token, user: userData };
@@ -529,7 +616,7 @@ app.post(
         "INSERT INTO users (name, email, username, password_hash, role) VALUES ($1, $2, $3, $4, $5) RETURNING user_id, name, email, username, password_hash, role",
         [formattedName, normalizedEmail, username, hashPassword(password), role],
       );
-      res.status(201).json(await startSession(result.rows[0], res));
+      res.status(201).json(await startSession(result.rows[0], res, req));
     } catch (error) {
       if (error.code === "23505") {
         if (error.constraint === "users_username_unique") {
@@ -581,7 +668,7 @@ app.post(
         .json({ error: "This account has been deactivated. Please contact an administrator." });
     }
 
-    const session = await startSession(user, res);
+    const session = await startSession(user, res, req);
     await logAuthEvent(pool, {
       actor: session.user,
       action: "LOGIN",
@@ -667,14 +754,14 @@ app.post(
 
 app.post(
   "/api/auth/logout",
-  requireAuth,
   asyncRoute(async (req, res) => {
     const token = tokenFrom(req);
-    if (req.user) {
+    const user = token ? await getSession(token) : null;
+    if (user) {
       await logAuthEvent(pool, {
-        actor: req.user,
+        actor: user,
         action: "LOGOUT",
-        description: `User "${req.user.name}" (${req.user.username}) signed out`,
+        description: `User "${user.name}" (${user.username}) signed out`,
         req,
       });
     }
@@ -684,12 +771,7 @@ app.post(
         pool.query("DELETE FROM user_sessions WHERE session_token = $1", [token]).catch(() => {});
       }
     }
-    res.clearCookie("campus_session", {
-      path: "/",
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production" || isRemoteDb,
-    });
+    clearSessionCookies(res, req);
     res.status(204).end();
   }),
 );
@@ -704,7 +786,10 @@ app.get(
       return res.status(401).json({ error: "User no longer exists." });
     }
     const fresh = safeUser(userRow);
-    sessions.set(tokenFrom(req), fresh);
+    const token = tokenFrom(req);
+    sessions.set(token, fresh);
+    // Refresh/sync session cookies so Inspect always reflects active session
+    setSessionCookies(res, token, req);
     res.json({ user: fresh });
   }),
 );

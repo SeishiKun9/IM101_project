@@ -11,7 +11,7 @@ export async function apiRequest(path, options = {}) {
   let response;
   try {
     response = await fetch(`/api${path}`, {
-      credentials: "same-origin",
+      credentials: "include",
       ...options,
       headers,
     });
