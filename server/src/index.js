@@ -3002,6 +3002,319 @@ app.get(
   }),
 );
 
+// ==============================================================================
+// Task 17: Verifier & Admin Bulk Operations Endpoints
+// ==============================================================================
+
+app.post(
+  "/api/admin/claims/bulk-decision",
+  requireDatabase,
+  requireAuth,
+  requireRole("staff", "admin"),
+  asyncRoute(async (req, res) => {
+    const { claimIds, decision, reason = "" } = req.body || {};
+    if (!Array.isArray(claimIds) || !claimIds.length) {
+      return res.status(400).json({ error: "Please provide an array of claimIds." });
+    }
+    if (!["approved", "rejected"].includes(decision)) {
+      return res.status(400).json({ error: "Decision must be 'approved' or 'rejected'." });
+    }
+
+    const client = await pool.connect();
+    const appUrl = req.headers.origin || req.headers.referer || "";
+    let processedCount = 0;
+
+    try {
+      await client.query("BEGIN");
+      await setAuditContext(client, req.user, req);
+
+      for (const id of claimIds) {
+        const claimId = parseInt(id, 10);
+        if (isNaN(claimId)) continue;
+
+        const prevClaimRes = await client.query(
+          "SELECT claim_id, item_id, claimant_id, status FROM claims WHERE claim_id = $1 FOR UPDATE",
+          [claimId],
+        );
+        if (!prevClaimRes.rows.length) continue;
+        const prevClaim = prevClaimRes.rows[0];
+
+        // Only decide on pending claims
+        if (prevClaim.status !== "pending") continue;
+
+        // Prevent approving duplicate claims for the same physical item
+        if (decision === "approved") {
+          const existingApproved = await client.query(
+            "SELECT claim_id FROM claims WHERE item_id = $1 AND status IN ('approved', 'claimed') AND claim_id != $2",
+            [prevClaim.item_id, claimId],
+          );
+          if (existingApproved.rows.length) continue;
+        }
+
+        const updateRes = await client.query(
+          "UPDATE claims SET status = $1, reviewed_by = $2, reviewed_at = now(), rejection_reason = $3 WHERE claim_id = $4 RETURNING claim_id",
+          [
+            decision,
+            req.user.id,
+            decision === "rejected" ? reason.trim() : null,
+            claimId,
+          ],
+        );
+        if (!updateRes.rows.length) continue;
+
+        if (decision === "approved") {
+          await client.query(
+            `UPDATE items
+             SET status = 'claimed'
+             WHERE item_id = $1
+                OR matched_lost_id = $1
+                OR matched_found_id = $1
+                OR item_id IN (SELECT matched_lost_id FROM items WHERE item_id = $1 AND matched_lost_id IS NOT NULL)
+                OR item_id IN (SELECT matched_found_id FROM items WHERE item_id = $1 AND matched_found_id IS NOT NULL)`,
+            [prevClaim.item_id],
+          );
+        } else if (decision === "rejected") {
+          const otherApproved = await client.query(
+            "SELECT claim_id FROM claims WHERE item_id = $1 AND status = 'approved' AND claim_id != $2",
+            [prevClaim.item_id, claimId],
+          );
+          if (!otherApproved.rows.length) {
+            await client.query(
+              `UPDATE items
+               SET status = 'found'
+               WHERE (item_id = $1
+                  OR matched_lost_id = $1
+                  OR matched_found_id = $1
+                  OR item_id IN (SELECT matched_lost_id FROM items WHERE item_id = $1 AND matched_lost_id IS NOT NULL)
+                  OR item_id IN (SELECT matched_found_id FROM items WHERE item_id = $1 AND matched_found_id IS NOT NULL))
+                 AND status = 'claimed'`,
+              [prevClaim.item_id],
+            );
+          }
+        }
+
+        // Audit log
+        await logStatusChange(client, {
+          actor: req.user,
+          action: "DECISION",
+          entityType: "claims",
+          entityId: claimId,
+          oldStatus: "pending",
+          newStatus: decision,
+          description: `Bulk decision: claim #${claimId} marked as ${decision}${reason ? ` (Reason: ${reason})` : ""}`,
+          req,
+        });
+
+        // Notifications & Emails
+        if (prevClaim.claimant_id) {
+          const title = decision === "approved" ? "Claim Approved!" : "Claim Update";
+          const message = decision === "approved"
+            ? "Your claim was approved! You may now visit CSA to collect your item."
+            : `Your claim was reviewed and rejected.${reason ? ` Reason: ${reason}` : ""}`;
+
+          await createNotification(client, {
+            userId: prevClaim.claimant_id,
+            title,
+            message,
+            type: decision === "approved" ? "item_ready" : "status_update",
+            link: `/?item=${prevClaim.item_id}`,
+            itemId: prevClaim.item_id,
+          });
+
+          // Send email asynchronously
+          const claimantInfo = await client.query(
+            "SELECT u.email, u.name, i.title AS item_title FROM users u JOIN items i ON i.item_id = $2 WHERE u.user_id = $1",
+            [prevClaim.claimant_id, prevClaim.item_id],
+          );
+          const claimant = claimantInfo.rows[0];
+          if (claimant?.email) {
+            sendClaimDecisionEmail({
+              to: claimant.email,
+              name: claimant.name,
+              itemTitle: claimant.item_title || `Item #${prevClaim.item_id}`,
+              decision,
+              reason,
+              claimId,
+              itemId: prevClaim.item_id,
+              appUrl,
+            }).catch((err) => console.error("[Mailer Bulk Error]:", err));
+          }
+        }
+
+        processedCount++;
+      }
+
+      await client.query("COMMIT");
+      res.json({
+        success: true,
+        processedCount,
+        message: `Successfully ${decision} ${processedCount} claim${processedCount === 1 ? "" : "s"}.`,
+      });
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  }),
+);
+
+app.post(
+  "/api/admin/claims/bulk-collect",
+  requireDatabase,
+  requireAuth,
+  requireRole("staff", "admin"),
+  asyncRoute(async (req, res) => {
+    const { claimIds } = req.body || {};
+    if (!Array.isArray(claimIds) || !claimIds.length) {
+      return res.status(400).json({ error: "Please provide an array of claimIds." });
+    }
+
+    const client = await pool.connect();
+    const appUrl = req.headers.origin || req.headers.referer || "";
+    let processedCount = 0;
+
+    try {
+      await client.query("BEGIN");
+      await setAuditContext(client, req.user, req);
+
+      for (const id of claimIds) {
+        const claimId = parseInt(id, 10);
+        if (isNaN(claimId)) continue;
+
+        const claimRes = await client.query(
+          "UPDATE claims SET status = 'claimed', collection_date = now(), collected_by = $1 WHERE claim_id = $2 AND status = 'approved' RETURNING item_id, claimant_id",
+          [req.user.id, claimId],
+        );
+        if (!claimRes.rows.length) continue;
+        const claim = claimRes.rows[0];
+
+        await client.query(
+          `UPDATE items
+           SET status = 'completed', collection_date = now(), collected_by = $1
+           WHERE item_id = $2
+              OR matched_lost_id = $2
+              OR matched_found_id = $2
+              OR item_id IN (SELECT matched_lost_id FROM items WHERE item_id = $2 AND matched_lost_id IS NOT NULL)
+              OR item_id IN (SELECT matched_found_id FROM items WHERE item_id = $2 AND matched_found_id IS NOT NULL)`,
+          [req.user.id, claim.item_id],
+        );
+
+        await logStatusChange(client, {
+          actor: req.user,
+          action: "COLLECT",
+          entityType: "claims",
+          entityId: claimId,
+          oldStatus: "approved",
+          newStatus: "claimed",
+          description: `Bulk handover collection completed for claim #${claimId}`,
+          req,
+        });
+
+        if (claim.claimant_id) {
+          await createNotification(client, {
+            userId: claim.claimant_id,
+            title: "Item Handover Completed",
+            message: "Your item was successfully claimed and marked as completed. Thank you for using Campus Lost & Found!",
+            type: "item_ready",
+            link: `/?item=${claim.item_id}`,
+            itemId: claim.item_id,
+          });
+
+          const claimantInfo = await client.query(
+            "SELECT u.email, u.name, i.title AS item_title FROM users u JOIN items i ON i.item_id = $2 WHERE u.user_id = $1",
+            [claim.claimant_id, claim.item_id],
+          );
+          const claimant = claimantInfo.rows[0];
+          if (claimant?.email) {
+            sendItemHandoverEmail({
+              to: claimant.email,
+              name: claimant.name,
+              itemTitle: claimant.item_title || `Item #${claim.item_id}`,
+              claimId,
+              appUrl,
+            }).catch((err) => console.error("[Mailer Bulk Handover Error]:", err));
+          }
+        }
+
+        processedCount++;
+      }
+
+      await client.query("COMMIT");
+      res.json({
+        success: true,
+        processedCount,
+        message: `Successfully completed handover for ${processedCount} item${processedCount === 1 ? "" : "s"}.`,
+      });
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  }),
+);
+
+app.post(
+  "/api/admin/items/bulk-status",
+  requireDatabase,
+  requireAuth,
+  requireRole("staff", "admin"),
+  asyncRoute(async (req, res) => {
+    const { itemIds, status, notes = "" } = req.body || {};
+    if (!Array.isArray(itemIds) || !itemIds.length) {
+      return res.status(400).json({ error: "Please provide an array of itemIds." });
+    }
+    const ALLOWED_STATUSES = ["reported", "under_review", "closed"];
+    if (!ALLOWED_STATUSES.includes(status)) {
+      return res.status(400).json({ error: `Invalid status. Allowed statuses: ${ALLOWED_STATUSES.join(", ")}` });
+    }
+
+    const client = await pool.connect();
+    let processedCount = 0;
+
+    try {
+      await client.query("BEGIN");
+      await setAuditContext(client, req.user, req);
+
+      for (const id of itemIds) {
+        const itemId = parseInt(id, 10);
+        if (isNaN(itemId)) continue;
+
+        const updateRes = await client.query(
+          "UPDATE items SET status = $1, updated_at = now() WHERE item_id = $2 RETURNING item_id, title",
+          [status, itemId],
+        );
+        if (!updateRes.rows.length) continue;
+
+        await logStatusChange(client, {
+          actor: req.user,
+          action: "UPDATE",
+          entityType: "items",
+          entityId: itemId,
+          newStatus: status,
+          description: `Bulk status update: item #${itemId} ("${updateRes.rows[0].title}") set to ${status}${notes ? ` - ${notes}` : ""}`,
+          req,
+        });
+
+        processedCount++;
+      }
+
+      await client.query("COMMIT");
+      res.json({
+        success: true,
+        processedCount,
+        message: `Successfully updated ${processedCount} report${processedCount === 1 ? "" : "s"} to ${status}.`,
+      });
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  }),
+);
+
 
 
 app.post(

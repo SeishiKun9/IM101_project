@@ -7230,3 +7230,131 @@ img,
 }
 
 
+
+/* ==========================================================================
+   Task 17: Verifier & Admin Bulk Operations UI
+   ========================================================================== */
+
+.bulk-selection-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.bulk-selection-pills {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.bulk-selection-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-right: 2px;
+}
+
+.bulk-pill-btn {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  color: var(--text-main);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  font-weight: 500;
+}
+
+.bulk-pill-btn:hover {
+  background: var(--surface-hover);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.bulk-pill-btn.bulk-pill-clear {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: #ef4444;
+}
+
+.bulk-pill-btn.bulk-pill-clear:hover {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: #ef4444;
+}
+
+.bulk-actions-toolbar {
+  position: sticky;
+  top: 12px;
+  z-index: 25;
+  background: var(--surface);
+  border: 1.5px solid var(--primary);
+  border-radius: var(--radius-sm);
+  padding: 12px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 18px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.18);
+  flex-wrap: wrap;
+  animation: fadeIn 0.18s ease-in-out;
+}
+
+.bulk-toolbar-info {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13.5px;
+}
+
+.bulk-toolbar-count {
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.bulk-toolbar-breakdown {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.bulk-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.bulk-select-checkbox {
+  width: 17px;
+  height: 17px;
+  cursor: pointer;
+  accent-color: var(--primary);
+  vertical-align: middle;
+  border-radius: 4px;
+}
+
+.claim-selection-col {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-right: 4px;
+}
+
+.claim-card-row.selected {
+  border-color: var(--primary);
+  background: rgba(59, 130, 246, 0.05);
+  box-shadow: 0 0 0 1px var(--primary);
+}
+
+tr.row-selected {
+  background: rgba(59, 130, 246, 0.06) !important;
+}
+
+.bulk-reject-modal {
+  width: min(100%, 520px);
+}

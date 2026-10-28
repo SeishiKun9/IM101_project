@@ -29,8 +29,26 @@ export default function ReviewWorkspace({ user, onChanged }) {
   const [exportModalDataset, setExportModalDataset] = useState(null);
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState("compare"); // "compare" | "claims" | "cases" | "locations" | "accounts" | "system" | "audit"
+  const [reviewType, setReviewType] = useState("found"); // "found" | "lost"
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Task 17: Bulk actions state
+  const [selectedClaimIds, setSelectedClaimIds] = useState([]);
+  const [selectedItemIds, setSelectedItemIds] = useState([]);
+  const [bulkActionBusy, setBulkActionBusy] = useState(false);
+  const [bulkActionNotice, setBulkActionNotice] = useState(null);
+  const [bulkRejectModalOpen, setBulkRejectModalOpen] = useState(false);
+  const [bulkRejectReason, setBulkRejectReason] = useState(
+    "Insufficient proof of ownership provided",
+  );
+
+  // Clear selections when switching tabs
+  useEffect(() => {
+    setSelectedClaimIds([]);
+    setSelectedItemIds([]);
+    setBulkActionNotice(null);
+  }, [activeTab]);
 
   useEffect(() => {
     if (mobileNavOpen) {
@@ -105,7 +123,179 @@ export default function ReviewWorkspace({ user, onChanged }) {
     }
   }
 
-  const [reviewType, setReviewType] = useState("found"); // "found" | "lost"
+  // Task 17: Bulk Claims Handlers
+  function toggleClaimSelection(claimId) {
+    setSelectedClaimIds((prev) =>
+      prev.includes(claimId)
+        ? prev.filter((id) => id !== claimId)
+        : [...prev, claimId],
+    );
+  }
+
+  function selectAllClaims(filterStatus = null) {
+    if (!queue.claims || !queue.claims.length) return;
+    const targetClaims = filterStatus
+      ? queue.claims.filter((c) => c.status === filterStatus)
+      : queue.claims;
+    setSelectedClaimIds(targetClaims.map((c) => c.id));
+  }
+
+  function clearClaimSelection() {
+    setSelectedClaimIds([]);
+  }
+
+  async function handleBulkClaimDecision(decision, customReason = "") {
+    const pendingSelectedIds = selectedClaimIds.filter((id) => {
+      const claim = queue.claims.find((c) => c.id === id);
+      return claim && claim.status === "pending";
+    });
+
+    if (!pendingSelectedIds.length) {
+      setBulkActionNotice({
+        type: "error",
+        message: `No pending claims selected to ${decision}.`,
+      });
+      return;
+    }
+
+    setBulkActionBusy(true);
+    try {
+      const res = await apiRequest("/admin/claims/bulk-decision", {
+        method: "POST",
+        body: JSON.stringify({
+          claimIds: pendingSelectedIds,
+          decision,
+          reason: customReason || "",
+        }),
+      });
+
+      setBulkActionNotice({
+        type: "success",
+        message: res.message || `Successfully processed ${res.processedCount} claims.`,
+      });
+      setSelectedClaimIds([]);
+      setBulkRejectModalOpen(false);
+      refresh();
+      onChanged?.();
+    } catch (err) {
+      setBulkActionNotice({
+        type: "error",
+        message: err.message || "Failed to process bulk decision.",
+      });
+    } finally {
+      setBulkActionBusy(false);
+    }
+  }
+
+  async function handleBulkCollect() {
+    const approvedSelectedIds = selectedClaimIds.filter((id) => {
+      const claim = queue.claims.find((c) => c.id === id);
+      return claim && claim.status === "approved";
+    });
+
+    if (!approvedSelectedIds.length) {
+      setBulkActionNotice({
+        type: "error",
+        message: "No approved claims selected for handover.",
+      });
+      return;
+    }
+
+    setBulkActionBusy(true);
+    try {
+      const res = await apiRequest("/admin/claims/bulk-collect", {
+        method: "POST",
+        body: JSON.stringify({ claimIds: approvedSelectedIds }),
+      });
+
+      setBulkActionNotice({
+        type: "success",
+        message: res.message || `Successfully completed handover for ${res.processedCount} items.`,
+      });
+      setSelectedClaimIds([]);
+      refresh();
+      onChanged?.();
+    } catch (err) {
+      setBulkActionNotice({
+        type: "error",
+        message: err.message || "Failed to complete bulk handover.",
+      });
+    } finally {
+      setBulkActionBusy(false);
+    }
+  }
+
+  // Task 17: Bulk Items Handlers
+  function toggleItemSelection(itemId) {
+    setSelectedItemIds((prev) =>
+      prev.includes(itemId)
+        ? prev.filter((id) => id !== itemId)
+        : [...prev, itemId],
+    );
+  }
+
+  function toggleAllCurrentItems() {
+    const currentList = reviewType === "found" ? queue.items : queue.lost;
+    const allSelected =
+      currentList.length > 0 &&
+      currentList.every((item) => selectedItemIds.includes(item.id));
+
+    if (allSelected) {
+      const currentIds = new Set(currentList.map((item) => item.id));
+      setSelectedItemIds((prev) => prev.filter((id) => !currentIds.has(id)));
+    } else {
+      const newIds = currentList.map((item) => item.id);
+      setSelectedItemIds((prev) => Array.from(new Set([...prev, ...newIds])));
+    }
+  }
+
+  function clearItemSelection() {
+    setSelectedItemIds([]);
+  }
+
+  async function handleBulkItemStatus(status, notes = "") {
+    if (!selectedItemIds.length) return;
+
+    if (status === "closed") {
+      const confirmed = window.confirm(
+        `Are you sure you want to close/archive ${selectedItemIds.length} selected report(s)?`,
+      );
+      if (!confirmed) return;
+    }
+
+    setBulkActionBusy(true);
+    try {
+      const res = await apiRequest("/admin/items/bulk-status", {
+        method: "POST",
+        body: JSON.stringify({
+          itemIds: selectedItemIds,
+          status,
+          notes,
+        }),
+      });
+
+      setBulkActionNotice({
+        type: "success",
+        message: res.message || `Successfully updated ${res.processedCount} items.`,
+      });
+      setSelectedItemIds([]);
+      refresh();
+      onChanged?.();
+    } catch (err) {
+      setBulkActionNotice({
+        type: "error",
+        message: err.message || "Failed to update item statuses.",
+      });
+    } finally {
+      setBulkActionBusy(false);
+    }
+  }
+
+  function switchReviewType(type) {
+    setReviewType(type);
+    setSelectedItemIds([]);
+    setBulkActionNotice(null);
+  }
 
   async function markUnderReview(itemId) {
     try {
@@ -179,6 +369,15 @@ export default function ReviewWorkspace({ user, onChanged }) {
       setError(err.message || "Failed to download reports CSV.");
     }
   }
+
+  const pendingClaimsCount = (queue.claims || []).filter((c) => c.status === "pending").length;
+  const approvedClaimsCount = (queue.claims || []).filter((c) => c.status === "approved").length;
+  const selectedPendingClaims = (queue.claims || []).filter(
+    (c) => selectedClaimIds.includes(c.id) && c.status === "pending",
+  );
+  const selectedApprovedClaims = (queue.claims || []).filter(
+    (c) => selectedClaimIds.includes(c.id) && c.status === "approved",
+  );
 
   const roleTitle = roleNames[user?.role] || "Staff";
   const isAdmin = user?.role === "admin";
@@ -441,6 +640,37 @@ export default function ReviewWorkspace({ user, onChanged }) {
         </div>
       )}
 
+      {bulkActionNotice && (
+        <div
+          className={`alert-banner ${bulkActionNotice.type === "error" ? "alert-danger" : "alert-success"}`}
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: "16px",
+          }}
+        >
+          <span>{bulkActionNotice.message}</span>
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={() => setBulkActionNotice(null)}
+            style={{
+              background: "transparent",
+              border: "none",
+              color: "inherit",
+              fontSize: "18px",
+              cursor: "pointer",
+              padding: "0 4px",
+              lineHeight: 1,
+            }}
+            title="Dismiss notice"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
       {/* Main Split: Sidebar + Content */}
       <div className="workspace-main-split">
         {/* Sidebar Nav */}
@@ -507,7 +737,7 @@ export default function ReviewWorkspace({ user, onChanged }) {
                   className={`btn btn-sm ${
                     reviewType === "found" ? "btn-primary" : "btn-secondary"
                   }`}
-                  onClick={() => setReviewType("found")}
+                  onClick={() => switchReviewType("found")}
                 >
                   Found Reports ({queue.items.length})
                 </button>
@@ -516,7 +746,7 @@ export default function ReviewWorkspace({ user, onChanged }) {
                   className={`btn btn-sm ${
                     reviewType === "lost" ? "btn-primary" : "btn-secondary"
                   }`}
-                  onClick={() => setReviewType("lost")}
+                  onClick={() => switchReviewType("lost")}
                 >
                   Lost Reports ({queue.lost.length})
                 </button>
@@ -540,11 +770,69 @@ export default function ReviewWorkspace({ user, onChanged }) {
                     </span>
                   </div>
 
+                  {/* Bulk actions toolbar for found items */}
+                  {selectedItemIds.length > 0 && (
+                    <div className="bulk-actions-toolbar">
+                      <div className="bulk-toolbar-info">
+                        <span className="bulk-toolbar-count">
+                          <strong>{selectedItemIds.length}</strong> report{selectedItemIds.length === 1 ? "" : "s"} selected
+                        </span>
+                      </div>
+                      <div className="bulk-toolbar-actions">
+                        <button
+                          type="button"
+                          className="btn btn-primary btn-sm"
+                          disabled={bulkActionBusy}
+                          onClick={() => handleBulkItemStatus("under_review")}
+                        >
+                          👁 Mark Under Review ({selectedItemIds.length})
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          disabled={bulkActionBusy}
+                          onClick={() => handleBulkItemStatus("reported")}
+                        >
+                          ↺ Reset to Reported ({selectedItemIds.length})
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-danger btn-sm"
+                          disabled={bulkActionBusy}
+                          onClick={() => handleBulkItemStatus("closed", "Closed via bulk verifier review")}
+                        >
+                          🔒 Close / Archive ({selectedItemIds.length})
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          disabled={bulkActionBusy}
+                          onClick={clearItemSelection}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   {queue.items.length ? (
                     <div className="table-responsive">
                       <table className="workspace-table">
                         <thead>
                           <tr>
+                            <th style={{ width: "42px", textAlign: "center" }}>
+                              <input
+                                type="checkbox"
+                                className="bulk-select-checkbox"
+                                checked={
+                                  queue.items.length > 0 &&
+                                  queue.items.every((item) => selectedItemIds.includes(item.id))
+                                }
+                                onChange={toggleAllCurrentItems}
+                                title="Select/Deselect all found reports"
+                                aria-label="Select all found reports"
+                              />
+                            </th>
                             <th>Item &amp; Category</th>
                             <th>Turned In Location</th>
                             <th>Date Found</th>
@@ -554,7 +842,16 @@ export default function ReviewWorkspace({ user, onChanged }) {
                         </thead>
                         <tbody>
                           {queue.items.map((item) => (
-                            <tr key={item.id}>
+                            <tr key={item.id} className={selectedItemIds.includes(item.id) ? "row-selected" : ""}>
+                              <td style={{ textAlign: "center" }}>
+                                <input
+                                  type="checkbox"
+                                  className="bulk-select-checkbox"
+                                  checked={selectedItemIds.includes(item.id)}
+                                  onChange={() => toggleItemSelection(item.id)}
+                                  aria-label={`Select ${item.title}`}
+                                />
+                              </td>
                               <td>
                                 <strong>{item.title}</strong>
                                 <small className="table-subtext">
@@ -639,11 +936,69 @@ export default function ReviewWorkspace({ user, onChanged }) {
                     </span>
                   </div>
 
+                  {/* Bulk actions toolbar for lost items */}
+                  {selectedItemIds.length > 0 && (
+                    <div className="bulk-actions-toolbar">
+                      <div className="bulk-toolbar-info">
+                        <span className="bulk-toolbar-count">
+                          <strong>{selectedItemIds.length}</strong> report{selectedItemIds.length === 1 ? "" : "s"} selected
+                        </span>
+                      </div>
+                      <div className="bulk-toolbar-actions">
+                        <button
+                          type="button"
+                          className="btn btn-primary btn-sm"
+                          disabled={bulkActionBusy}
+                          onClick={() => handleBulkItemStatus("under_review")}
+                        >
+                          👁 Mark Under Review ({selectedItemIds.length})
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          disabled={bulkActionBusy}
+                          onClick={() => handleBulkItemStatus("reported")}
+                        >
+                          ↺ Reset to Reported ({selectedItemIds.length})
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-danger btn-sm"
+                          disabled={bulkActionBusy}
+                          onClick={() => handleBulkItemStatus("closed", "Closed via bulk verifier review")}
+                        >
+                          🔒 Close / Archive ({selectedItemIds.length})
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          disabled={bulkActionBusy}
+                          onClick={clearItemSelection}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   {queue.lost.length ? (
                     <div className="table-responsive">
                       <table className="workspace-table">
                         <thead>
                           <tr>
+                            <th style={{ width: "42px", textAlign: "center" }}>
+                              <input
+                                type="checkbox"
+                                className="bulk-select-checkbox"
+                                checked={
+                                  queue.lost.length > 0 &&
+                                  queue.lost.every((item) => selectedItemIds.includes(item.id))
+                                }
+                                onChange={toggleAllCurrentItems}
+                                title="Select/Deselect all lost reports"
+                                aria-label="Select all lost reports"
+                              />
+                            </th>
                             <th>Item &amp; Category</th>
                             <th>Last Known Location</th>
                             <th>Date Lost</th>
@@ -653,7 +1008,16 @@ export default function ReviewWorkspace({ user, onChanged }) {
                         </thead>
                         <tbody>
                           {queue.lost.map((item) => (
-                            <tr key={item.id}>
+                            <tr key={item.id} className={selectedItemIds.includes(item.id) ? "row-selected" : ""}>
+                              <td style={{ textAlign: "center" }}>
+                                <input
+                                  type="checkbox"
+                                  className="bulk-select-checkbox"
+                                  checked={selectedItemIds.includes(item.id)}
+                                  onChange={() => toggleItemSelection(item.id)}
+                                  aria-label={`Select ${item.title}`}
+                                />
+                              </td>
                               <td>
                                 <strong>{item.title}</strong>
                                 <small className="table-subtext">
@@ -729,10 +1093,118 @@ export default function ReviewWorkspace({ user, onChanged }) {
                 </span>
               </div>
 
+              {/* Bulk Selection Quick Filter Pills */}
+              {queue.claims.length > 0 && (
+                <div className="bulk-selection-bar">
+                  <div className="bulk-selection-pills">
+                    <span className="bulk-selection-label">Select:</span>
+                    <button
+                      type="button"
+                      className="bulk-pill-btn"
+                      onClick={() => selectAllClaims()}
+                    >
+                      All ({queue.claims.length})
+                    </button>
+                    <button
+                      type="button"
+                      className="bulk-pill-btn"
+                      onClick={() => selectAllClaims("pending")}
+                    >
+                      All Pending ({pendingClaimsCount})
+                    </button>
+                    <button
+                      type="button"
+                      className="bulk-pill-btn"
+                      onClick={() => selectAllClaims("approved")}
+                    >
+                      All Approved ({approvedClaimsCount})
+                    </button>
+                    {selectedClaimIds.length > 0 && (
+                      <button
+                        type="button"
+                        className="bulk-pill-btn bulk-pill-clear"
+                        onClick={clearClaimSelection}
+                      >
+                        Clear Selection ({selectedClaimIds.length})
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Sticky Bulk Actions Toolbar */}
+              {selectedClaimIds.length > 0 && (
+                <div className="bulk-actions-toolbar">
+                  <div className="bulk-toolbar-info">
+                    <span className="bulk-toolbar-count">
+                      <strong>{selectedClaimIds.length}</strong> claim{selectedClaimIds.length === 1 ? "" : "s"} selected
+                    </span>
+                    <span className="bulk-toolbar-breakdown">
+                      ({selectedPendingClaims.length} pending, {selectedApprovedClaims.length} approved)
+                    </span>
+                  </div>
+                  <div className="bulk-toolbar-actions">
+                    {selectedPendingClaims.length > 0 && (
+                      <>
+                        <button
+                          type="button"
+                          className="btn btn-primary btn-sm"
+                          disabled={bulkActionBusy}
+                          onClick={() => handleBulkClaimDecision("approved")}
+                          title="Approve all selected pending claims"
+                        >
+                          ✓ Bulk Approve ({selectedPendingClaims.length})
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-danger btn-sm"
+                          disabled={bulkActionBusy}
+                          onClick={() => setBulkRejectModalOpen(true)}
+                          title="Reject all selected pending claims"
+                        >
+                          ✕ Bulk Reject ({selectedPendingClaims.length})
+                        </button>
+                      </>
+                    )}
+                    {selectedApprovedClaims.length > 0 && (
+                      <button
+                        type="button"
+                        className="btn btn-accent btn-sm"
+                        disabled={bulkActionBusy}
+                        onClick={handleBulkCollect}
+                        title="Complete physical handover for all selected approved claims"
+                      >
+                        🤝 Complete Handover ({selectedApprovedClaims.length})
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      disabled={bulkActionBusy}
+                      onClick={clearClaimSelection}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {queue.claims.length ? (
                 <div className="claims-cards-grid">
                   {queue.claims.map((claim) => (
-                    <article className="claim-card-row" key={claim.id}>
+                    <article
+                      className={`claim-card-row ${selectedClaimIds.includes(claim.id) ? "selected" : ""}`}
+                      key={claim.id}
+                    >
+                      <div className="claim-selection-col">
+                        <input
+                          type="checkbox"
+                          className="bulk-select-checkbox"
+                          checked={selectedClaimIds.includes(claim.id)}
+                          onChange={() => toggleClaimSelection(claim.id)}
+                          aria-label={`Select claim #${claim.id}`}
+                        />
+                      </div>
                       <div className="claim-main-info">
                         <div className="claim-header-line">
                           <span className="claim-id-pill">
@@ -941,6 +1413,127 @@ export default function ReviewWorkspace({ user, onChanged }) {
             onChanged?.();
           }}
         />
+      )}
+
+      {/* Task 17: Bulk Reject Modal */}
+      {bulkRejectModalOpen && (
+        <div
+          className="modal-backdrop"
+          onClick={() => !bulkActionBusy && setBulkRejectModalOpen(false)}
+        >
+          <div
+            className="modal-card bulk-reject-modal"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="bulk-reject-title"
+          >
+            <div className="modal-header">
+              <h3 id="bulk-reject-title">
+                Bulk Reject Claims ({selectedPendingClaims.length})
+              </h3>
+              <button
+                type="button"
+                className="modal-close"
+                onClick={() => !bulkActionBusy && setBulkRejectModalOpen(false)}
+              >
+                ×
+              </button>
+            </div>
+            <div
+              className="modal-body"
+              style={{ display: "flex", flexDirection: "column", gap: "14px", marginTop: "12px" }}
+            >
+              <p style={{ margin: 0, color: "var(--text-muted)", fontSize: "14px", lineHeight: "1.5" }}>
+                You are about to reject <strong>{selectedPendingClaims.length}</strong> pending claim
+                {selectedPendingClaims.length === 1 ? "" : "s"}. Each claimant will receive an in-app
+                notification and an email notification with the reason below.
+              </p>
+
+              <div>
+                <label
+                  style={{
+                    display: "block",
+                    marginBottom: "6px",
+                    fontSize: "13px",
+                    fontWeight: "600",
+                  }}
+                >
+                  Reason for Rejection:
+                </label>
+                <textarea
+                  rows="3"
+                  value={bulkRejectReason}
+                  onChange={(e) => setBulkRejectReason(e.target.value)}
+                  placeholder="Explain why these claims are being rejected..."
+                  style={{ width: "100%", resize: "vertical" }}
+                />
+              </div>
+
+              <div>
+                <label
+                  style={{
+                    display: "block",
+                    marginBottom: "6px",
+                    fontSize: "12px",
+                    color: "var(--text-muted)",
+                    fontWeight: "500",
+                  }}
+                >
+                  Quick preset reasons:
+                </label>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                  {[
+                    "Insufficient proof of ownership provided",
+                    "Item description and serial markings do not match",
+                    "Claim expired without verification response",
+                    "Duplicate claim submission",
+                  ].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      style={{ fontSize: "12px", padding: "4px 8px" }}
+                      onClick={() => setBulkRejectReason(preset)}
+                    >
+                      {preset}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div
+              className="modal-footer"
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                gap: "10px",
+                marginTop: "20px",
+                borderTop: "1px solid var(--border)",
+                paddingTop: "14px",
+              }}
+            >
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                disabled={bulkActionBusy}
+                onClick={() => setBulkRejectModalOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger btn-sm"
+                disabled={bulkActionBusy || !bulkRejectReason.trim()}
+                onClick={() => handleBulkClaimDecision("rejected", bulkRejectReason)}
+              >
+                {bulkActionBusy
+                  ? "Rejecting..."
+                  : `Confirm Rejection (${selectedPendingClaims.length})`}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
