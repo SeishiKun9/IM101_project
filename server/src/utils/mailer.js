@@ -23,7 +23,10 @@ const brevoApiKey = (
   (smtpPass.startsWith("xkeysib-") ? smtpPass : "")
 ).trim();
 
-// 1. Check if Brevo REST API is configured
+// 1. Check if Gmail service is requested
+const isGmail = smtpService === "gmail" || (!smtpHost && smtpUser.toLowerCase().endsWith("@gmail.com"));
+
+// Check which email provider is configured
 if (brevoApiKey) {
   transportProvider = "brevo_api";
   console.log(`[Email] Mailer configured with Brevo REST API.`);
@@ -447,27 +450,46 @@ export async function sendItemMatchedEmail({
   const base = getAppUrl(appUrl);
   const itemLink = `${base}/?item=${itemId}`;
 
-  const subject = `Your Lost Item May Have Been Found! ("${lostTitle}")`;
+  const subject = `Your Lost Item Has Been Found! ("${lostTitle}") - Claim at CSA Office`;
   const bodyContent = `
     <p>Hello <strong>${name}</strong>,</p>
     <div style="margin-bottom: 16px;">
-      <span class="badge badge-match">✨ Verified Match Found</span>
+      <span class="badge badge-approved">🎉 Item Found & Verified</span>
     </div>
-    <p>A found item handed into the campus office has been verified and linked to your lost report:</p>
+    <p>Great news! An item matching your lost report has been handed in and verified by campus staff:</p>
     
     <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 16px; margin: 20px 0;">
       <p style="margin: 0 0 6px; font-size: 13px; color: #92400e;"><strong>Your Lost Report:</strong> ${lostTitle}</p>
       <p style="margin: 0; font-size: 14px; color: #78350f;"><strong>Matched Found Item:</strong> ${foundTitle}</p>
     </div>
 
-    <p>Please check the item details on the dashboard and request a claim or arrange pickup if this is your item.</p>
+    <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 18px 20px; margin: 22px 0;">
+      <h4 style="margin: 0 0 10px; color: #166534; font-size: 15px;">📍 Pickup & Collection Notice:</h4>
+      <p style="margin: 0 0 8px; color: #14532d; font-size: 14px; font-weight: 600;">
+        Your item has been found! Please claim it at the CSA OFFICE (Campus Safety & Security Office).
+      </p>
+      <ul style="margin: 0; padding-left: 20px; font-size: 13px; color: #15803d; line-height: 1.6;">
+        <li>Location: <strong>Campus Safety Administration (CSA) Office</strong></li>
+        <li>Operating Hours: <strong>Monday – Friday, 8:00 AM – 5:00 PM</strong></li>
+        <li>Requirement: Please bring your valid <strong>Student/Faculty ID</strong> for verification.</li>
+      </ul>
+    </div>
+
+    <p>You can also check the item photos and full details on the campus dashboard:</p>
   `;
 
   const text = `Hello ${name},
 
-A found item ("${foundTitle}") has been verified and matched to your lost report ("${lostTitle}").
+Great news! Your lost item has been found.
 
-Please visit the dashboard to inspect the item and request a claim:
+An item matching your lost report ("${lostTitle}") has been verified: "${foundTitle}".
+
+PLEASE CLAIM IT AT THE CSA OFFICE:
+- Location: Campus Safety Administration (CSA) Office
+- Hours: Monday - Friday, 8:00 AM - 5:00 PM
+- Requirement: Bring your valid Student/Faculty ID for verification.
+
+View item details:
 ${itemLink}
 
 Campus Lost & Found System`;
@@ -478,7 +500,7 @@ Campus Lost & Found System`;
     html: wrapHtmlEmail({
       title: subject,
       bodyContent,
-      ctaText: "Inspect Found Item",
+      ctaText: "View Item on Dashboard",
       ctaLink: itemLink,
     }),
     text,

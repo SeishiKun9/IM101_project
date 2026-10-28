@@ -2187,7 +2187,7 @@ app.post(
         await createNotification(client, {
           userId: lost.rows[0].reporter_id,
           title: "Your Lost Item Has Been Found & Verified! 🎉",
-          message: `Great news! "${found.rows[0].title}" was officially verified and matched to your report. You can now request a claim or arrange pickup with CSA.`,
+          message: `Great news! Your lost item "${found.rows[0].title}" has been found and verified. Please claim it at the CSA OFFICE with your Student ID.`,
           type: "item_ready",
           link: `/?item=${req.params.foundId}`,
           itemId: req.params.foundId,
