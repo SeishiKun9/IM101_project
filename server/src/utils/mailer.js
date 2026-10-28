@@ -1,78 +1,116 @@
 import nodemailer from "nodemailer";
+import dotenv from "dotenv";
 
-// Retrieve email configuration with flexible fallbacks
-const smtpService = (process.env.SMTP_SERVICE || process.env.EMAIL_SERVICE || "").trim().toLowerCase();
-const smtpHost = (process.env.SMTP_HOST || process.env.EMAIL_HOST || "").trim();
-const smtpPort = Number(process.env.SMTP_PORT || process.env.EMAIL_PORT || 587);
-const smtpUser = (process.env.SMTP_USER || process.env.EMAIL_USER || process.env.MAIL_USER || "").trim();
-const rawPass = process.env.SMTP_PASS || process.env.EMAIL_PASS || process.env.MAIL_PASS || process.env.EMAIL_PASSWORD || "";
-// Strip any spaces from app passwords (e.g. Google's 16-letter App Password display "xxxx xxxx xxxx xxxx")
-const smtpPass = rawPass.replace(/\s+/g, "");
-const smtpSecure = process.env.SMTP_SECURE === "true" || smtpPort === 465;
-const defaultFrom =
-  process.env.SMTP_FROM ||
-  (smtpUser ? `"Campus Lost & Found" <${smtpUser}>` : '"Campus Lost & Found" <no-reply@campuslostandfound.edu>');
+let cachedTransporter = null;
+let cachedSignature = "";
+let currentProvider = "none";
 
-let transporter = null;
-let transportProvider = "none";
-
-// 1. Check if Gmail service is requested or user is a gmail address without a host
-const isGmail = smtpService === "gmail" || (!smtpHost && smtpUser.toLowerCase().endsWith("@gmail.com"));
-
-if (isGmail && smtpUser && smtpPass) {
-  transportProvider = "gmail";
-  transporter = nodemailer.createTransport({
-    service: "gmail",
-    auth: {
-      user: smtpUser,
-      pass: smtpPass,
-    },
-  });
-  console.log(`[Email] Mailer configured with Gmail service for: ${smtpUser}`);
-} else if (smtpHost && smtpUser && smtpPass) {
-  transportProvider = "smtp";
-  transporter = nodemailer.createTransport({
-    host: smtpHost,
-    port: smtpPort,
-    secure: smtpSecure,
-    auth: {
-      user: smtpUser,
-      pass: smtpPass,
-    },
-    tls: {
-      rejectUnauthorized: process.env.NODE_ENV === "production",
-    },
-  });
-  console.log(`[Email] Mailer configured with custom SMTP host: ${smtpHost}:${smtpPort}`);
-} else {
-  console.log(
-    "[Email] SMTP credentials not set in .env. Email delivery will run in mock/console mode.",
-  );
-}
-
-// Background verification of SMTP connection
-if (transporter) {
-  transporter.verify((err) => {
-    if (err) {
-      console.warn(`[Email Warning] SMTP connection test failed: ${err.message}. If using Gmail, make sure you use an App Password, not your regular password.`);
-    } else {
-      console.log("[Email] SMTP connection verified successfully! Ready to deliver real emails.");
+/**
+ * Dynamically resolves or refreshes the SMTP transporter from environment variables.
+ */
+export function getTransporter() {
+  if (process.env.NODE_ENV !== "production") {
+    try {
+      dotenv.config({ override: true });
+    } catch {
+      // ignore
     }
-  });
+  }
+
+  const smtpService = (process.env.SMTP_SERVICE || process.env.EMAIL_SERVICE || "").trim().toLowerCase();
+  const smtpHost = (process.env.SMTP_HOST || process.env.EMAIL_HOST || "").trim();
+  const smtpPort = Number(process.env.SMTP_PORT || process.env.EMAIL_PORT || 587);
+  const smtpUser = (process.env.SMTP_USER || process.env.EMAIL_USER || process.env.MAIL_USER || "").trim();
+  const rawPass = process.env.SMTP_PASS || process.env.EMAIL_PASS || process.env.MAIL_PASS || process.env.EMAIL_PASSWORD || "";
+  const smtpPass = rawPass.replace(/\s+/g, "");
+  const smtpSecure = process.env.SMTP_SECURE === "true" || smtpPort === 465;
+
+  const signature = `${smtpService}|${smtpHost}|${smtpPort}|${smtpUser}|${smtpPass}|${smtpSecure}`;
+
+  if (cachedTransporter && signature === cachedSignature) {
+    return {
+      transporter: cachedTransporter,
+      provider: currentProvider,
+      service: smtpService,
+      host: smtpHost,
+      port: smtpPort,
+      user: smtpUser,
+    };
+  }
+
+  // Auto-detect Gmail or Google Workspace accounts (e.g. hnu.edu.ph, gmail.com, or no host specified)
+  const isGmail =
+    smtpService === "gmail" ||
+    (!smtpHost &&
+      (smtpUser.toLowerCase().endsWith("@gmail.com") ||
+        smtpUser.toLowerCase().includes("@hnu.edu.ph") ||
+        !smtpHost));
+
+  const hasValidPass =
+    smtpPass &&
+    !smtpPass.startsWith("PASTE_YOUR_") &&
+    !smtpPass.startsWith("xxxx");
+
+  if (smtpUser && hasValidPass) {
+    if (isGmail) {
+      currentProvider = "gmail";
+      cachedTransporter = nodemailer.createTransport({
+        service: "gmail",
+        auth: {
+          user: smtpUser,
+          pass: smtpPass,
+        },
+      });
+      console.log(`[Email] Mailer active with Gmail/Google Workspace service for: ${smtpUser}`);
+    } else if (smtpHost) {
+      currentProvider = "smtp";
+      cachedTransporter = nodemailer.createTransport({
+        host: smtpHost,
+        port: smtpPort,
+        secure: smtpSecure,
+        auth: {
+          user: smtpUser,
+          pass: smtpPass,
+        },
+        tls: {
+          rejectUnauthorized: process.env.NODE_ENV === "production",
+        },
+      });
+      console.log(`[Email] Mailer active with custom SMTP host: ${smtpHost}:${smtpPort}`);
+    }
+    cachedSignature = signature;
+  } else {
+    cachedTransporter = null;
+    cachedSignature = "";
+    currentProvider = "none";
+  }
+
+  return {
+    transporter: cachedTransporter,
+    provider: currentProvider,
+    service: isGmail ? "gmail" : (smtpService || null),
+    host: smtpHost || (isGmail ? "smtp.gmail.com" : null),
+    port: isGmail ? 465 : smtpPort,
+    user: smtpUser || null,
+  };
 }
 
 /**
  * Returns current mailer configuration status.
  */
 export function getMailerStatus() {
-  const isConfigured = Boolean(transporter);
+  const { transporter, provider, service, host, port, user } = getTransporter();
+  const defaultFrom =
+    process.env.SMTP_FROM ||
+    (user ? `"Campus Lost & Found" <${user}>` : '"Campus Lost & Found" <no-reply@campuslostandfound.edu>');
+
   return {
-    configured: isConfigured,
-    provider: transportProvider,
-    service: isGmail ? "gmail" : (smtpService || null),
-    host: smtpHost || (isGmail ? "smtp.gmail.com" : null),
-    port: isGmail ? 465 : smtpPort,
-    user: smtpUser ? `${smtpUser.slice(0, 3)}***@${smtpUser.split("@")[1] || ""}` : null,
+    configured: Boolean(transporter),
+    provider,
+    service,
+    host,
+    port,
+    user: user ? `${user.slice(0, 3)}***@${user.split("@")[1] || ""}` : null,
     from: defaultFrom,
   };
 }
@@ -81,6 +119,7 @@ export function getMailerStatus() {
  * Tests connection to the configured SMTP transporter.
  */
 export async function verifyMailerConnection() {
+  const { transporter, provider } = getTransporter();
   if (!transporter) {
     return {
       success: false,
@@ -90,7 +129,7 @@ export async function verifyMailerConnection() {
   }
   try {
     await transporter.verify();
-    return { success: true, configured: true, provider: transportProvider };
+    return { success: true, configured: true, provider };
   } catch (err) {
     return { success: false, configured: true, error: err.message };
   }
@@ -116,6 +155,11 @@ export async function sendMail({ to, subject, html, text }) {
     return { success: false, error: "No recipient address provided" };
   }
 
+  const { transporter, provider, user } = getTransporter();
+  const defaultFrom =
+    process.env.SMTP_FROM ||
+    (user ? `"Campus Lost & Found" <${user}>` : '"Campus Lost & Found" <no-reply@campuslostandfound.edu>');
+
   if (transporter) {
     try {
       const info = await transporter.sendMail({
@@ -126,7 +170,7 @@ export async function sendMail({ to, subject, html, text }) {
         text,
       });
       console.log(`[Email] Message sent to ${to}: ${info.messageId}`);
-      return { success: true, messageId: info.messageId, provider: transportProvider, to };
+      return { success: true, messageId: info.messageId, provider, to };
     } catch (err) {
       console.error(`[Email] Failed sending mail to ${to}:`, err.message);
       // Fallback: log to console so production admins can still retrieve reset tokens or notices
