@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { apiRequest } from "../api/client.js";
 import { statusMessage, statusText } from "../constants/statuses.js";
 import { formatLocation, normalizeCoord } from "../utils/location.js";
+import { useAuth } from "../context/AuthContext.jsx";
 
 export default function ItemDetailsModal({
   item: initialItem,
@@ -10,6 +11,7 @@ export default function ItemDetailsModal({
   showPrivate = false,
   onSelectSimilar,
 }) {
+  const { user } = useAuth();
   const [item, setItem] = useState(initialItem);
   const [similarItems, setSimilarItems] = useState([]);
   const [loadingSimilar, setLoadingSimilar] = useState(false);
@@ -51,11 +53,22 @@ export default function ItemDetailsModal({
     };
   }, [item?.id]);
 
-  function handleSelectSimilar(similar) {
+  async function handleSelectSimilar(similar) {
+    const candidateItem = similar.item || similar;
     if (onSelectSimilar) {
-      onSelectSimilar(similar);
+      onSelectSimilar(candidateItem);
     }
-    setItem(similar);
+    setItem(candidateItem);
+    if (candidateItem?.id) {
+      try {
+        const fullItem = await apiRequest(`/items/${candidateItem.id}`);
+        if (fullItem && fullItem.id) {
+          setItem(fullItem);
+        }
+      } catch (err) {
+        // Retain candidateItem fallback
+      }
+    }
   }
 
   const displayName = showPrivate
@@ -75,9 +88,33 @@ export default function ItemDetailsModal({
     statusClass = "status-blue";
   }
 
-  const claimTargetId = item.type === "lost" ? item.matchedFoundId : item.id;
-  const canClaim =
-    item.status === "found" && claimTargetId && item.eligibleToClaim !== false;
+  const isReporter = Boolean(
+    showPrivate ||
+      (user &&
+        (item.reporterId === user.id ||
+          item.reporterEmail === user.email ||
+          item.isOwner)),
+  );
+
+  let canClaim = false;
+  let claimTargetId = null;
+
+  if (!isClosed && item.eligibleToClaim !== false) {
+    if (item.type === "lost") {
+      // For a lost report, only the user who lost it can claim once a matched found item is identified
+      if (isReporter && item.status === "found" && item.matchedFoundId) {
+        canClaim = true;
+        claimTargetId = item.matchedFoundId;
+      }
+    } else if (item.type === "found") {
+      // For a found report, the founder/finder can NEVER claim it.
+      // Only another user (non-reporter) browsing public found reports can request a claim.
+      if (!isReporter) {
+        canClaim = true;
+        claimTargetId = item.id;
+      }
+    }
+  }
 
   async function handlePrivacySubmit(event) {
     event.preventDefault();
@@ -118,6 +155,24 @@ export default function ItemDetailsModal({
         >
           ×
         </button>
+
+        {/* Navigation back to original report if viewing a candidate comparison */}
+        {initialItem && item.id !== initialItem.id && (
+          <div style={{ marginBottom: "0.75rem" }}>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => {
+                setItem(initialItem);
+                if (onSelectSimilar) {
+                  onSelectSimilar(initialItem);
+                }
+              }}
+            >
+              ← Back to my report
+            </button>
+          </div>
+        )}
 
         {/* Header Badges & Title */}
         <div className="modal-header-badges">
@@ -318,8 +373,12 @@ export default function ItemDetailsModal({
 
                     <div className="similar-card-meta">
                       <span>{similar.building || similar.location || "Campus Area"}</span>
-                      <span>•</span>
-                      <span>{similar.date}</span>
+                      {similar.date && (
+                        <>
+                          <span>•</span>
+                          <span>{similar.date}</span>
+                        </>
+                      )}
                     </div>
 
                     {similar.reasons && similar.reasons.length > 0 && (

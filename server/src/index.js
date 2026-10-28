@@ -136,6 +136,7 @@ const publicItemFields = `
   COALESCE(m.name, 'Campus Main Map') AS "mapName",
   i.map_x AS "mapX", i.map_y AS "mapY",
   i.location_snapshot AS "locationSnapshot",
+  i.reporter_id AS "reporterId",
   CASE WHEN i.is_anonymous THEN 'Anonymous' ELSE COALESCE(i.reporter_name, 'Unknown') END AS "reporterName",
   (SELECT image_path FROM item_images WHERE item_id = i.item_id ORDER BY uploaded_at LIMIT 1) AS image`;
 
@@ -982,14 +983,9 @@ app.get(
   requireDatabase,
   asyncRoute(async (req, res) => {
     const targetQuery = await pool.query(
-      `SELECT i.item_id, i.item_type, i.title, i.description, i.date_reported,
-              c.category_name AS category,
-              COALESCE(b.name, i.location_snapshot->>'buildingName') AS building,
-              COALESCE(r.name, i.location_description, i.location_snapshot->>'roomName') AS location
+      `SELECT ${publicItemFields}
        FROM items i
-       JOIN categories c ON c.category_id = i.category_id
-       LEFT JOIN buildings b ON b.building_id = i.building_id
-       LEFT JOIN rooms r ON r.room_id = i.room_id
+       ${itemLocationJoins}
        WHERE i.item_id = $1`,
       [req.params.itemId],
     );
@@ -999,24 +995,31 @@ app.get(
     }
 
     const target = targetQuery.rows[0];
-    const oppositeType = target.item_type === "found" ? "lost" : "found";
+    const oppositeType = target.type === "found" ? "lost" : "found";
 
     const candidates = await pool.query(
       `SELECT ${publicItemFields}
        FROM items i
        ${itemLocationJoins}
-       WHERE i.item_type = $1 AND i.status IN ('reported', 'under_review', 'found')
+       WHERE i.item_type = $1
+         AND i.item_id != $2
+         AND i.status IN ('reported', 'under_review', 'found')
+         AND (
+           (i.item_type = 'found' AND i.matched_lost_id IS NULL) OR
+           (i.item_type = 'lost' AND i.matched_found_id IS NULL)
+         )
        ORDER BY i.created_at DESC
-       LIMIT 50`,
-      [oppositeType],
+       LIMIT 60`,
+      [oppositeType, target.id],
     );
 
     const scored = candidates.rows
       .map((cand) => {
-        const lostObj = target.item_type === "lost" ? target : cand;
-        const foundObj = target.item_type === "found" ? target : cand;
+        const lostObj = target.type === "lost" ? target : cand;
+        const foundObj = target.type === "found" ? target : cand;
         const match = calculateMatchScore(lostObj, foundObj);
         return {
+          ...cand,
           item: cand,
           score: match.score,
           confidence: match.confidence,
@@ -1610,82 +1613,6 @@ app.get(
   }),
 );
 
-// ==========================================
-// Similar Items / Match Recommendations (Item 12)
-// ==========================================
-app.get(
-  "/api/items/:itemId/similar",
-  requireDatabase,
-  asyncRoute(async (req, res) => {
-    const targetRes = await pool.query(
-      `SELECT item_id, item_type, title, description, category, building, location,
-              date_reported, status, matched_lost_id, matched_found_id
-       FROM items
-       WHERE item_id = $1`,
-      [req.params.itemId],
-    );
-
-    const target = targetRes.rows[0];
-    if (!target) {
-      return res.json([]);
-    }
-
-    const oppositeType = target.item_type === "lost" ? "found" : "lost";
-    const candidatesRes = await pool.query(
-      `SELECT item_id AS id, item_type AS type, title, description, category,
-              building, location, date_reported AS date, image_url AS image,
-              status, map_x AS "mapX", map_y AS "mapY"
-       FROM items
-       WHERE item_type = $1
-         AND item_id != $2
-         AND status IN ('reported', 'found', 'under_review')
-         AND (
-           ($1 = 'found' AND matched_lost_id IS NULL) OR
-           ($1 = 'lost' AND matched_found_id IS NULL)
-         )
-       ORDER BY created_at DESC
-       LIMIT 60`,
-      [oppositeType, target.item_id],
-    );
-
-    const targetForScoring = {
-      title: target.title,
-      description: target.description,
-      category: target.category,
-      building: target.building,
-      room: target.location,
-      date: target.date_reported,
-    };
-
-    const scored = [];
-    for (const cand of candidatesRes.rows) {
-      const candForScoring = {
-        title: cand.title,
-        description: cand.description,
-        category: cand.category,
-        building: cand.building,
-        room: cand.location,
-        date: cand.date,
-      };
-
-      const lostObj = target.item_type === "lost" ? targetForScoring : candForScoring;
-      const foundObj = target.item_type === "found" ? targetForScoring : candForScoring;
-      const match = calculateMatchScore(lostObj, foundObj);
-
-      if (match.score >= 35) {
-        scored.push({
-          ...cand,
-          score: match.score,
-          confidence: match.confidence,
-          reasons: match.reasons,
-        });
-      }
-    }
-
-    scored.sort((a, b) => b.score - a.score);
-    res.json(scored.slice(0, 4));
-  }),
-);
 
 // ==========================================
 // In-App Notifications API (Item 3 & 4)
