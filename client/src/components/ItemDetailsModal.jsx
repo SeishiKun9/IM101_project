@@ -189,7 +189,7 @@ export default function ItemDetailsModal({
             {item.type === "lost" ? "LOST REPORT" : "FOUND REPORT"}
           </span>
           <span className={`status-badge ${statusClass}`}>
-            {statusText(effectiveStatus)}
+            {statusText(effectiveStatus, item.type)}
           </span>
         </div>
 
@@ -250,7 +250,7 @@ export default function ItemDetailsModal({
 
               <div className="detail-grid-item">
                 <dt>Current Status</dt>
-                <dd>{statusText(item.status)}</dd>
+                <dd>{statusText(effectiveStatus, item.type)}</dd>
               </div>
 
               <div className="detail-grid-item">

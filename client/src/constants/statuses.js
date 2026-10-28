@@ -31,7 +31,26 @@ export const roleNames = {
   admin: "Administrator",
 };
 
-export function statusText(status) {
+export function statusText(status, itemType = "lost") {
+  if (itemType === "found") {
+    switch (status) {
+      case "reported":
+        return "Reported";
+      case "under_review":
+        return "Under Review";
+      case "found":
+        return "Handed Over to CSA";
+      case "claimed":
+        return "Handed Over to Owner";
+      case "completed":
+        return "Complete";
+      case "rejected":
+        return "Rejected";
+      default:
+        return statusNames[status] || status;
+    }
+  }
+
   return statusNames[status] || status;
 }
 
@@ -45,9 +64,9 @@ export function statusMessage(status, itemType = "lost") {
       case "found":
         return "You handed it over to CSA. Thank you for cooperating!";
       case "claimed":
-        return "Claim approved by CSA verifier. Item is scheduled for claimant collection.";
+        return "Claim approved by CSA verifier. Item is scheduled for handover to the owner.";
       case "completed":
-        return "Item has been returned to its verified owner. Thank you for your cooperation!";
+        return "Item has been handed over to its owner and this case is complete. Thank you for your cooperation!";
       case "rejected":
         return "This report was rejected after review.";
       default:

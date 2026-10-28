@@ -53,14 +53,25 @@ export default function ReportCard({
 
   const foundSteps = [
     { key: "reported", label: "Reported" },
+    { key: "hand_over_to_csa", label: "Hand Over to CSA" },
     { key: "under_review", label: "Under Review" },
-    { key: "found", label: "Turned Over to CSA" },
-    { key: "claimed", label: "Claim Approved" },
-    { key: "completed", label: "Handed Over" },
+    { key: "handed_over_to_owner", label: "Handed Over to Owner" },
+    { key: "complete", label: "Complete" },
   ];
 
   const currentSteps = item.type === "lost" ? lostSteps : foundSteps;
-  const currentStepIndex = currentSteps.findIndex((s) => s.key === effectiveStatus);
+  const currentStepIndex = (() => {
+    if (item.type === "lost") {
+      return lostSteps.findIndex((s) => s.key === effectiveStatus);
+    }
+    // Found item lifecycle:
+    // 1. Reported -> 2. Hand Over to CSA -> 3. Under Review -> 4. Handed Over to Owner -> 5. Complete
+    if (isCompleted) return 4;
+    if (isClaimApproved) return 3;
+    if (isFound || isUnderReview) return 2;
+    if (effectiveStatus === "reported") return 1;
+    return 0;
+  })();
 
   return (
     <article
@@ -114,7 +125,7 @@ export default function ReportCard({
               {item.type === "lost" ? "LOST REPORT" : "FOUND REPORT"}
             </span>
             <span className={`status-badge ${statusClass}`}>
-              {statusText(effectiveStatus)}
+              {statusText(effectiveStatus, item.type)}
             </span>
             {item.category && (
               <span className="item-category-tag">{item.category}</span>
@@ -265,7 +276,7 @@ export default function ReportCard({
         <div className="client-report-note notice-success">
           <strong>Claim Approved:</strong>{" "}
           {item.type === "found"
-            ? "Claim approved by CSA verifier. Item is scheduled for claimant collection."
+            ? "Claim approved by CSA verifier. Item is scheduled for handover to the owner."
             : "Your claim has been approved! Proceed to CSA for ownership verification and collection."}
         </div>
       )}
