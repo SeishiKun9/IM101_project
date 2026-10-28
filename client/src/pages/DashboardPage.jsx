@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { apiRequest } from "../api/client.js";
 import ItemCard from "../components/ItemCard.jsx";
 import { statusText } from "../constants/statuses.js";
+import { campusLocations } from "../constants/locations.js";
 
 function getPageNumbers(currentPage, totalPages) {
   if (totalPages <= 7) {
@@ -43,6 +44,8 @@ export default function DashboardPage({
   setStatus,
   category = "all",
   setCategory,
+  building = "all",
+  setBuilding,
   dateFrom = "",
   setDateFrom,
   dateTo = "",
@@ -80,7 +83,7 @@ export default function DashboardPage({
           setDbCategories(data.map((c) => c.name));
         }
       })
-      .catch(() => {});
+      .catch(() => { });
   }, []);
 
   // Merge database categories with any from currently loaded items
@@ -123,12 +126,13 @@ export default function DashboardPage({
 
   const hasActiveFilters = Boolean(
     (search && search.trim()) ||
-      type !== "all" ||
-      status !== "all" ||
-      category !== "all" ||
-      dateFrom ||
-      dateTo ||
-      sort !== "newest",
+    type !== "all" ||
+    status !== "all" ||
+    category !== "all" ||
+    (building && building !== "all") ||
+    dateFrom ||
+    dateTo ||
+    (sort !== "newest" && sort !== "relevance"),
   );
 
   const totalItems = pagination.total || items.length;
@@ -309,6 +313,21 @@ export default function DashboardPage({
                   ))}
               </select>
 
+              {/* Building / Campus Area Filter (Task 8) */}
+              <select
+                className="toolbar-select"
+                value={building}
+                onChange={(e) => setBuilding?.(e.target.value)}
+                aria-label="Filter by campus building"
+              >
+                <option value="all">All campus areas</option>
+                {Object.keys(campusLocations).map((bldg) => (
+                  <option key={bldg} value={bldg}>
+                    Building: {bldg}
+                  </option>
+                ))}
+              </select>
+
               {/* Status Filter */}
               <select
                 className="toolbar-select"
@@ -414,6 +433,20 @@ export default function DashboardPage({
                     className="filter-chip-remove"
                     onClick={() => setCategory?.("all")}
                     title="Remove category filter"
+                  >
+                    ×
+                  </button>
+                </span>
+              )}
+
+              {building && building !== "all" && (
+                <span className="filter-chip">
+                  Building: <strong>{building}</strong>
+                  <button
+                    type="button"
+                    className="filter-chip-remove"
+                    onClick={() => setBuilding?.("all")}
+                    title="Remove building filter"
                   >
                     ×
                   </button>

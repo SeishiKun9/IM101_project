@@ -34,6 +34,7 @@ export default function App() {
   const [type, setType] = useState("all");
   const [status, setStatus] = useState("all");
   const [category, setCategory] = useState("all");
+  const [building, setBuilding] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [sort, setSort] = useState("newest");
@@ -67,6 +68,7 @@ export default function App() {
     if (type !== "all") query.set("type", type);
     if (status !== "all") query.set("status", status);
     if (category !== "all") query.set("category", category);
+    if (building !== "all") query.set("building", building);
     if (dateFrom) query.set("dateFrom", dateFrom);
     if (dateTo) query.set("dateTo", dateTo);
     if (sort !== "newest") query.set("sort", sort);
@@ -122,6 +124,10 @@ export default function App() {
     setCategory(newCategory);
     if (page !== 1) setPage(1);
   }
+  function handleBuildingChange(newBuilding) {
+    setBuilding(newBuilding);
+    if (page !== 1) setPage(1);
+  }
   function handleDateFromChange(newDateFrom) {
     setDateFrom(newDateFrom);
     if (page !== 1) setPage(1);
@@ -139,6 +145,7 @@ export default function App() {
     setType("all");
     setStatus("all");
     setCategory("all");
+    setBuilding("all");
     setDateFrom("");
     setDateTo("");
     setSort("newest");
@@ -160,7 +167,7 @@ export default function App() {
 
   useEffect(() => {
     loadItems(page, limit);
-  }, [page, limit, search, type, status, category, dateFrom, dateTo, sort]);
+  }, [page, limit, search, type, status, category, building, dateFrom, dateTo, sort]);
 
   useEffect(() => {
     loadReports();
@@ -253,6 +260,8 @@ export default function App() {
                 setStatus={handleStatusChange}
                 category={category}
                 setCategory={handleCategoryChange}
+                building={building}
+                setBuilding={handleBuildingChange}
                 dateFrom={dateFrom}
                 setDateFrom={handleDateFromChange}
                 dateTo={dateTo}
