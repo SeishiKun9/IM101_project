@@ -131,7 +131,7 @@ export default function EditAccountModal({
   return (
     <div className="modal-backdrop" onClick={onClose} role="dialog" aria-modal="true">
       <div
-        className="modal-card"
+        className="modal modal-card"
         onClick={(e) => e.stopPropagation()}
         style={{ maxWidth: "560px", width: "100%" }}
       >

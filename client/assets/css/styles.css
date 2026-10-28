@@ -157,6 +157,14 @@ html {
   -moz-osx-font-smoothing: grayscale;
   scroll-behavior: smooth;
   scrollbar-gutter: stable;
+  overflow-x: hidden;
+  max-width: 100%;
+}
+
+@media (max-width: 768px) {
+  html {
+    scrollbar-gutter: auto;
+  }
 }
 
 body {
@@ -166,16 +174,22 @@ body {
   display: flex;
   flex-direction: column;
   overflow-y: scroll;
+  overflow-x: hidden;
+  max-width: 100%;
+  width: 100%;
 }
 
 #root {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 main {
   flex: 1;
+  max-width: 100%;
 }
 
 h1,
@@ -647,6 +661,42 @@ button.danger:hover:not(:disabled) {
 }
 
 @media (max-width: 480px) {
+  .topbar-container {
+    padding: 0 12px;
+    gap: 8px;
+  }
+  .brand {
+    min-width: 0;
+    flex: 1 1 auto;
+    gap: 8px;
+  }
+  .brand-mark {
+    width: 32px !important;
+    height: 32px !important;
+    min-width: 32px !important;
+    flex-shrink: 0 !important;
+  }
+  .brand-text {
+    font-size: 14px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .topbar-actions {
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .guest-header-actions {
+    gap: 6px;
+  }
+  .guest-header-actions .guest-theme-container {
+    display: none !important;
+  }
+  .mobile-menu-btn {
+    width: 38px;
+    height: 38px;
+    flex-shrink: 0;
+  }
   .user-trigger-name,
   .user-chevron {
     display: none !important;
@@ -654,9 +704,6 @@ button.danger:hover:not(:disabled) {
   .user-dropdown-trigger {
     padding: 4px !important;
     gap: 0 !important;
-  }
-  .brand-text {
-    font-size: 15px;
   }
 }
 
@@ -1359,7 +1406,8 @@ button.danger:hover:not(:disabled) {
    Modals & Dialogs System
    ========================================================================== */
 
-.modal-backdrop {
+.modal-backdrop,
+.modal-overlay {
   position: fixed;
   inset: 0;
   z-index: 1000;
@@ -1367,13 +1415,15 @@ button.danger:hover:not(:disabled) {
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   padding: 24px 16px;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
-.modal {
+.modal,
+.modal-card {
   position: relative;
   background: var(--surface);
   border-radius: var(--radius-lg);
@@ -1383,6 +1433,7 @@ button.danger:hover:not(:disabled) {
   max-height: calc(100vh - 48px);
   overflow-y: auto;
   padding: 36px clamp(20px, 4vw, 36px);
+  margin: auto;
   animation: modal-pop 0.2s var(--ease) both;
 }
 
@@ -1414,6 +1465,7 @@ button.danger:hover:not(:disabled) {
   justify-content: center;
   cursor: pointer;
   transition: all var(--transition-fast);
+  z-index: 2;
 }
 
 .modal-close:hover {
@@ -1429,6 +1481,37 @@ button.danger:hover:not(:disabled) {
   color: var(--primary);
   margin-bottom: 8px;
   text-transform: uppercase;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 20px;
+}
+
+.modal-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-main);
+  margin: 0;
+}
+
+.modal-body {
+  overflow-y: auto;
+  max-height: calc(100vh - 220px);
+}
+
+.modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  margin-top: 20px;
 }
 
 .modal-intro {
@@ -1450,29 +1533,38 @@ button.danger:hover:not(:disabled) {
 }
 
 @media (max-width: 640px) {
-  .modal-backdrop {
-    padding: 10px;
+  .modal-backdrop,
+  .modal-overlay {
+    padding: 12px 8px;
+    align-items: flex-start;
   }
-  .modal {
+  .modal,
+  .modal-card {
     padding: 22px 14px;
-    max-height: calc(100vh - 20px);
+    max-height: calc(100vh - 24px);
     border-radius: var(--radius-md);
     width: 100%;
+    margin: auto;
   }
   .modal-close {
     top: 10px;
     right: 10px;
-    width: 30px;
-    height: 30px;
+    width: 32px;
+    height: 32px;
     font-size: 18px;
   }
   .modal-bottom-actions,
-  .modal-actions-bar {
+  .modal-actions-bar,
+  .modal-actions,
+  .modal-footer {
     flex-direction: column-reverse;
     gap: 8px;
+    width: 100%;
   }
   .modal-bottom-actions .btn,
-  .modal-actions-bar .btn {
+  .modal-actions-bar .btn,
+  .modal-actions button,
+  .modal-footer .btn {
     width: 100%;
     justify-content: center;
   }
@@ -2880,6 +2972,10 @@ button.danger:hover:not(:disabled) {
   margin-bottom: 14px;
 }
 
+.form-row .form-group {
+  margin-bottom: 0;
+}
+
 @media (max-width: 600px) {
   .form-row {
     flex-direction: column;
@@ -2944,6 +3040,14 @@ textarea {
   font-size: 14px;
   outline: none;
   transition: all var(--transition-fast);
+}
+
+@media (max-width: 768px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
 }
 
 input:focus,
@@ -3178,7 +3282,7 @@ input[type="radio"] {
 /* Checkboxes */
 .checkbox-control {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
   font-size: 13px;
   font-weight: 500;
@@ -3189,9 +3293,10 @@ input[type="radio"] {
 .checkbox-control input {
   width: 16px;
   height: 16px;
+  flex-shrink: 0;
   accent-color: var(--primary);
   cursor: pointer;
-  margin: 0;
+  margin: 3px 0 0 0;
 }
 
 .privacy-checkboxes-group {
@@ -3427,6 +3532,27 @@ input[type="radio"] {
 .toolbar-filters select:focus {
   border-color: var(--primary);
   box-shadow: 0 0 0 3px var(--primary-glow);
+}
+
+@media (max-width: 600px) {
+  .tab-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  .toolbar-filters {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+  }
+  .toolbar-filters input,
+  .toolbar-filters select {
+    width: 100%;
+  }
+  .tab-toolbar .btn {
+    width: 100%;
+    justify-content: center;
+  }
 }
 
 .admin-table {
@@ -4038,6 +4164,13 @@ input[type="radio"] {
   gap: 14px;
 }
 
+@media (max-width: 480px) {
+  .theme-options-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+}
+
 .theme-option-card {
   padding: 16px;
   background: var(--surface);
@@ -4382,6 +4515,13 @@ input[type="radio"] {
   margin-bottom: 24px;
 }
 
+@media (max-width: 600px) {
+  .profile-form-grid {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+}
+
 .input-read-only {
   background-color: var(--surface-alt) !important;
   color: var(--text-muted) !important;
@@ -4406,6 +4546,17 @@ input[type="radio"] {
   gap: 12px;
   padding-top: 18px;
   border-top: 1px solid var(--border);
+}
+
+@media (max-width: 600px) {
+  .profile-actions-bar {
+    flex-direction: column;
+    width: 100%;
+  }
+  .profile-actions-bar .btn {
+    width: 100%;
+    justify-content: center;
+  }
 }
 
 /* Password Requirements Guide */
@@ -4765,6 +4916,17 @@ img,
   font-size: 12px;
 }
 
+@media (max-width: 480px) {
+  .role-distribution-row {
+    grid-template-columns: 110px 1fr 40px;
+    gap: 8px;
+  }
+  .audit-kpi-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+}
+
 .role-distribution-meta {
   display: flex;
   align-items: center;
@@ -4911,12 +5073,44 @@ img,
   gap: 8px;
 }
 
+@media (max-width: 600px) {
+  .audit-filter-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .audit-search-field {
+    min-width: 100%;
+    width: 100%;
+  }
+  .audit-select-field {
+    min-width: 100%;
+    width: 100%;
+  }
+  .audit-date-group {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .audit-date-input {
+    flex: 1;
+  }
+  .audit-filter-btn-group {
+    width: 100%;
+    margin-left: 0;
+  }
+  .audit-filter-btn-group .btn {
+    flex: 1;
+    justify-content: center;
+  }
+}
+
 /* Table Styles */
 .audit-table-wrapper {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md, 8px);
-  overflow: hidden;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  max-width: 100%;
 }
 
 .audit-table {
@@ -5123,7 +5317,6 @@ img,
   padding: 0 4px;
 }
 
-/* Audit Detail Modal */
 .modal-overlay {
   position: fixed;
   inset: 0;
@@ -5132,17 +5325,19 @@ img,
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   padding: 24px 16px;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .modal.audit-detail-modal,
 .audit-detail-modal {
   max-width: 860px;
   width: min(95%, 860px);
-  max-height: 90vh;
+  max-height: calc(100vh - 48px);
+  margin: auto;
   display: flex;
   flex-direction: column;
   background: var(--surface, #ffffff);
@@ -6392,6 +6587,7 @@ img,
   width: 95%;
   height: 640px;
   max-height: 90vh;
+  margin: auto;
   display: flex;
   flex-direction: column;
   padding: 0;
