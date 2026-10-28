@@ -13,6 +13,7 @@ import ClaimConversationModal from "../ClaimConversationModal.jsx";
 import CompareModal from "./CompareModal.jsx";
 import LocationMapManagement from "./LocationMapManagement.jsx";
 import ExportDataModal from "./ExportDataModal.jsx";
+import UnclaimedItemsManagement from "./UnclaimedItemsManagement.jsx";
 
 export default function ReviewWorkspace({ user, onChanged }) {
   const [queue, setQueue] = useState({
@@ -20,6 +21,7 @@ export default function ReviewWorkspace({ user, onChanged }) {
     lost: [],
     claims: [],
     cases: [],
+    unclaimed: [],
   });
   const [selected, setSelected] = useState(null);
   const [selectedLost, setSelectedLost] = useState(null);
@@ -234,6 +236,24 @@ export default function ReviewWorkspace({ user, onChanged }) {
         </svg>
       ),
     },
+    {
+      id: "unclaimed",
+      label: "Unclaimed Expiry",
+      count: queue.unclaimed?.length || 0,
+      icon: (
+        <svg
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+        >
+          <circle cx="12" cy="12" r="10" />
+          <polyline points="12 6 12 12 16 14" />
+        </svg>
+      ),
+    },
   ];
 
   if (isAdmin) {
@@ -398,6 +418,20 @@ export default function ReviewWorkspace({ user, onChanged }) {
           <span className="kpi-label">Resolved Cases</span>
           <span className="kpi-value">{queue.cases.length}</span>
           <span className="kpi-hint">Completed handovers</span>
+        </div>
+
+        <div
+          className={`kpi-card clickable ${activeTab === "unclaimed" ? "active" : ""}`}
+          onClick={() => setActiveTab("unclaimed")}
+        >
+          <span className="kpi-label">Unclaimed Expiry</span>
+          <span
+            className="kpi-value"
+            style={{ color: (queue.unclaimed?.length || 0) > 0 ? "#ea580c" : undefined }}
+          >
+            {queue.unclaimed?.length || 0}
+          </span>
+          <span className="kpi-hint">&ge; 30 days in storage</span>
         </div>
       </section>
 
@@ -858,6 +892,10 @@ export default function ReviewWorkspace({ user, onChanged }) {
           )}
 
           {/* ADMIN-SPECIFIC TABS */}
+          {activeTab === "unclaimed" && (
+            <UnclaimedItemsManagement onActionCompleted={refresh} />
+          )}
+
           {isAdmin && activeTab === "locations" && <LocationMapManagement />}
 
           {isAdmin && activeTab === "accounts" && <AdminAccountForm />}

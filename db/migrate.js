@@ -274,6 +274,21 @@ export async function runMigrations(customPool = null) {
       console.error("Error setting up claim_messages and ownership_proofs:", msgErr.message);
     }
 
+    // Task 15: Ensure items table has disposition tracking columns for unclaimed expiry policy
+    try {
+      await client.query(`
+        ALTER TABLE items
+          ADD COLUMN IF NOT EXISTS disposition_type VARCHAR(40) DEFAULT 'none',
+          ADD COLUMN IF NOT EXISTS disposition_date TIMESTAMPTZ,
+          ADD COLUMN IF NOT EXISTS disposition_notes TEXT,
+          ADD COLUMN IF NOT EXISTS disposition_by BIGINT REFERENCES users(user_id);
+        CREATE INDEX IF NOT EXISTS idx_items_disposition ON items(disposition_type, date_reported);
+      `);
+      console.log("items disposition columns verified successfully.");
+    } catch (dispErr) {
+      console.error("Error setting up items disposition columns:", dispErr.message);
+    }
+
     // Ensure default categories exist
     try {
       const defaultCategories = [

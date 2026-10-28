@@ -31,6 +31,7 @@ import {
   validateSchoolEmail,
 } from "./utils/validation.js";
 import { calculateMatchScore } from "./utils/matchScorer.js";
+import { logAdminAudit } from "./services/audit.js";
 import {
   sendPasswordResetEmail,
   sendClaimDecisionEmail,
@@ -156,6 +157,9 @@ const publicItemFields = `
   i.location_snapshot AS "locationSnapshot",
   i.reporter_id AS "reporterId",
   CASE WHEN i.is_anonymous THEN 'Anonymous' ELSE COALESCE(i.reporter_name, 'Unknown') END AS "reporterName",
+  i.disposition_type AS "dispositionType",
+  i.disposition_date AS "dispositionDate",
+  i.disposition_notes AS "dispositionNotes",
   (SELECT image_path FROM item_images WHERE item_id = i.item_id ORDER BY uploaded_at LIMIT 1) AS image`;
 
 function asyncRoute(handler) {
@@ -2100,11 +2104,27 @@ app.get(
           OR (i.matched_lost_id IS NULL AND i.matched_found_id IS NULL AND i.status IN ('found', 'claimed', 'completed'))
        ORDER BY i.updated_at DESC`,
     );
+    const unclaimed = await pool.query(
+      `SELECT ${publicItemFields}, 
+              i.reporter_name AS "privateReporterName", 
+              i.contact_phone AS "contactPhone", 
+              i.is_anonymous AS "isAnonymous", 
+              i.hide_phone AS "hidePhone",
+              EXTRACT(DAY FROM (NOW() - COALESCE(i.date_reported::timestamp, i.created_at)))::int AS "daysUnclaimed"
+       FROM items i 
+       ${itemLocationJoins}
+       WHERE i.item_type = 'found' 
+         AND i.status IN ('reported', 'under_review', 'found') 
+         AND (i.disposition_type IS NULL OR i.disposition_type = 'none' OR i.disposition_type = 'extended')
+         AND (NOW() - COALESCE(i.date_reported::timestamp, i.created_at)) >= INTERVAL '30 days'
+       ORDER BY "daysUnclaimed" DESC`
+    );
     res.json({
       items: items.rows,
       lost: lost.rows,
       claims: claims.rows,
       cases: cases.rows,
+      unclaimed: unclaimed.rows,
     });
   }),
 );
@@ -2814,6 +2834,174 @@ app.get(
     res.send(csvOutput);
   }),
 );
+
+// ==============================================================================
+// Task 15: Unclaimed Items & Expiry Policy Endpoints
+// ==============================================================================
+
+app.get(
+  "/api/admin/items/unclaimed",
+  requireDatabase,
+  requireAuth,
+  requireRole("staff", "admin"),
+  asyncRoute(async (req, res) => {
+    const threshold = Math.max(1, parseInt(req.query.threshold, 10) || 30);
+
+    const statsQuery = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE (NOW() - COALESCE(date_reported::timestamp, created_at)) >= INTERVAL '30 days')::int AS "count30",
+        COUNT(*) FILTER (WHERE (NOW() - COALESCE(date_reported::timestamp, created_at)) >= INTERVAL '60 days')::int AS "count60",
+        COUNT(*) FILTER (WHERE (NOW() - COALESCE(date_reported::timestamp, created_at)) >= INTERVAL '90 days')::int AS "count90",
+        COUNT(*) FILTER (WHERE disposition_type IN ('donated', 'disposed'))::int AS "countDisposed"
+      FROM items
+      WHERE item_type = 'found'
+        AND (
+          (status IN ('reported', 'under_review', 'found') AND (disposition_type IS NULL OR disposition_type = 'none' OR disposition_type = 'extended'))
+          OR disposition_type IN ('donated', 'disposed')
+        )
+    `);
+
+    const unclaimedItems = await pool.query(
+      `SELECT
+         ${publicItemFields},
+         i.reporter_name AS "privateReporterName",
+         i.contact_phone AS "contactPhone",
+         i.is_anonymous AS "isAnonymous",
+         i.hide_phone AS "hidePhone",
+         i.disposition_type AS "dispositionType",
+         i.disposition_date AS "dispositionDate",
+         i.disposition_notes AS "dispositionNotes",
+         u_disp.name AS "dispositionByName",
+         EXTRACT(DAY FROM (NOW() - COALESCE(i.date_reported::timestamp, i.created_at)))::int AS "daysUnclaimed"
+       FROM items i
+       ${itemLocationJoins}
+       LEFT JOIN users u_disp ON u_disp.user_id = i.disposition_by
+       WHERE i.item_type = 'found'
+         AND i.status IN ('reported', 'under_review', 'found')
+         AND (i.disposition_type IS NULL OR i.disposition_type = 'none' OR i.disposition_type = 'extended')
+         AND (NOW() - COALESCE(i.date_reported::timestamp, i.created_at)) >= ($1 || ' days')::interval
+       ORDER BY "daysUnclaimed" DESC, i.item_id ASC`,
+      [threshold],
+    );
+
+    res.json({
+      metrics: statsQuery.rows[0] || { count30: 0, count60: 0, count90: 0, countDisposed: 0 },
+      items: unclaimedItems.rows,
+    });
+  }),
+);
+
+app.post(
+  "/api/admin/items/:itemId/disposition",
+  requireDatabase,
+  requireAuth,
+  requireRole("staff", "admin"),
+  asyncRoute(async (req, res) => {
+    const { action, notes = "" } = req.body;
+    if (!["donate", "dispose", "extend"].includes(action)) {
+      return res.status(400).json({ error: "Invalid disposition action. Choose 'donate', 'dispose', or 'extend'." });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const itemRes = await client.query(
+        "SELECT item_id, title, status, item_type FROM items WHERE item_id = $1 FOR UPDATE",
+        [req.params.itemId],
+      );
+
+      if (!itemRes.rows.length) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "Item not found." });
+      }
+
+      const item = itemRes.rows[0];
+      const now = new Date();
+
+      let newStatus = item.status;
+      let dispType = "none";
+      let logDesc = "";
+
+      if (action === "donate") {
+        newStatus = "closed";
+        dispType = "donated";
+        logDesc = `Item #${item.item_id} ("${item.title}") marked for university charity donation by ${req.user.name}: ${notes || "No notes provided"}`;
+      } else if (action === "dispose") {
+        newStatus = "closed";
+        dispType = "disposed";
+        logDesc = `Item #${item.item_id} ("${item.title}") marked for safe disposal/recycling by ${req.user.name}: ${notes || "No notes provided"}`;
+      } else if (action === "extend") {
+        dispType = "extended";
+        logDesc = `Item #${item.item_id} ("${item.title}") retention period extended by ${req.user.name}: ${notes || "+30 days retention extension"}`;
+      }
+
+      const updatedRes = await client.query(
+        `UPDATE items
+         SET status = $1,
+             disposition_type = $2,
+             disposition_date = $3,
+             disposition_notes = $4,
+             disposition_by = $5,
+             updated_at = $6
+         WHERE item_id = $7
+         RETURNING item_id, title, status, disposition_type AS "dispositionType", disposition_date AS "dispositionDate"`,
+        [newStatus, dispType, now, notes.trim(), req.user.id, now, item.item_id],
+      );
+
+      // Record PostgreSQL audit ledger entry
+      await logAdminAudit(client, {
+        actor: req.user,
+        action: "UPDATE",
+        status: "SUCCESS",
+        entityType: "item",
+        entityId: item.item_id,
+        description: logDesc,
+        req,
+      });
+
+      await client.query("COMMIT");
+      res.json({
+        success: true,
+        message: action === "donate"
+          ? "Item successfully processed for donation."
+          : action === "dispose"
+            ? "Item successfully processed for disposal."
+            : "Retention period extended successfully.",
+        item: updatedRes.rows[0],
+      });
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  }),
+);
+
+app.get(
+  "/api/admin/items/disposition-history",
+  requireDatabase,
+  requireAuth,
+  requireRole("staff", "admin"),
+  asyncRoute(async (req, res) => {
+    const history = await pool.query(
+      `SELECT
+         ${publicItemFields},
+         i.disposition_type AS "dispositionType",
+         i.disposition_date AS "dispositionDate",
+         i.disposition_notes AS "dispositionNotes",
+         u_disp.name AS "dispositionByName"
+       FROM items i
+       ${itemLocationJoins}
+       LEFT JOIN users u_disp ON u_disp.user_id = i.disposition_by
+       WHERE i.disposition_type IN ('donated', 'disposed')
+       ORDER BY i.disposition_date DESC
+       LIMIT 100`,
+    );
+    res.json(history.rows);
+  }),
+);
+
 
 
 app.post(
