@@ -3,8 +3,8 @@ services:
     name: campus-lost-found
     runtime: node
     plan: free
-    buildCommand: npm install && npm run build
-    startCommand: node server/src/index.js
+    buildCommand: npm install --include=dev && npm run build
+    startCommand: node db/migrate.js && node server/src/index.js
     envVars:
       - key: NODE_ENV
         value: production

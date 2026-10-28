@@ -11,18 +11,18 @@
     "format": "prettier --write server/src/index.js client/src/**/*.{js,jsx} client/*.html client/assets/css/*.css vite.config.js client/main.jsx"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^4.4.1",
     "concurrently": "^9.1.2",
-    "prettier": "^3.9.9",
-    "vite": "^6.1.0"
+    "prettier": "^3.9.9"
   },
   "dependencies": {
+    "@vitejs/plugin-react": "^4.4.1",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "nodemailer": "^10.2.1",
     "pg": "^8.13.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^7.18.4"
+    "react-router-dom": "^7.18.4",
+    "vite": "^6.1.0"
   }
 }

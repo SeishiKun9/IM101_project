@@ -201,6 +201,57 @@ export default function ForgotPasswordModal({ initialToken = "", onClose, onBack
           </form>
         ) : (
           <form className="auth-form" onSubmit={resetPassword} noValidate>
+            {dispatchStatus?.simulated && dispatchStatus?.resetToken && (
+              <div
+                style={{
+                  background: "rgba(34, 197, 94, 0.1)",
+                  border: "1px solid rgba(34, 197, 94, 0.3)",
+                  borderRadius: "8px",
+                  padding: "12px",
+                  marginBottom: "16px",
+                  fontSize: "12px",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginBottom: "8px",
+                  }}
+                >
+                  <span style={{ fontWeight: 600, color: "var(--accent-emerald)" }}>
+                    🛠️ Local Test Token (SMTP not set in .env):
+                  </span>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-primary"
+                    style={{ padding: "4px 10px", fontSize: "11px" }}
+                    onClick={() => {
+                      setToken(dispatchStatus.resetToken);
+                      navigator.clipboard?.writeText(dispatchStatus.resetToken);
+                    }}
+                  >
+                    Auto-Fill Token
+                  </button>
+                </div>
+                <code
+                  style={{
+                    display: "block",
+                    padding: "6px 8px",
+                    background: "rgba(0, 0, 0, 0.25)",
+                    borderRadius: "4px",
+                    wordBreak: "break-all",
+                    color: "var(--text-main)",
+                    fontSize: "11px",
+                    userSelect: "all",
+                  }}
+                >
+                  {dispatchStatus.resetToken}
+                </code>
+              </div>
+            )}
+
             <div className="form-group">
               <label htmlFor="reset-token">
                 Security Reset Token <span className="req">*</span>
