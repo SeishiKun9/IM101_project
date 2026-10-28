@@ -64,7 +64,7 @@ if (brevoApiKey) {
 async function sendViaBrevoApi({ to, subject, html, text }) {
   const fromMatch = defaultFrom.match(/(?:"?([^"]*)"?\s)?<?([^>]+)>?/);
   const senderName = fromMatch?.[1] || "Campus Lost & Found";
-  const senderEmail = fromMatch?.[2] || "aguimanallen12@gmail.com";
+  const senderEmail = fromMatch?.[2] || "aguiman.allen@hnu.edu.ph";
 
   const response = await fetch("https://api.brevo.com/v3/smtp/email", {
     method: "POST",
