@@ -334,3 +334,117 @@ export function calculateMatchScore(lost, found) {
     reasons,
   };
 }
+
+
+/**
+ * Calculates duplicate similarity score between a newly drafted candidate report
+ * and an existing open report from the same user.
+ *
+ * @param {Object} candidate - { title, category, description, buildingId }
+ * @param {Object} existing - { title, category, description, buildingId, building_id }
+ * @returns {{ score: number, isDuplicate: boolean, reasons: string[] }}
+ */
+export function calculateDuplicateScore(candidate, existing) {
+  if (!candidate || !existing) return { score: 0, isDuplicate: false, reasons: [] };
+
+  const candTitle = String(candidate.title || "").trim();
+  const existTitle = String(existing.title || "").trim();
+  if (!candTitle || !existTitle) return { score: 0, isDuplicate: false, reasons: [] };
+
+  const normCandTitle = normalizeText(candTitle);
+  const normExistTitle = normalizeText(existTitle);
+
+  let score = 0;
+  const reasons = [];
+
+  // 1. Title Similarity (up to 55 points)
+  if (normCandTitle === normExistTitle) {
+    score += 55;
+    reasons.push("Exact title match");
+  } else if (normCandTitle.includes(normExistTitle) || normExistTitle.includes(normCandTitle)) {
+    score += 35;
+    reasons.push("Title contains matching phrases");
+  } else {
+    const candTokens = tokenize(candTitle);
+    const existTokens = tokenize(existTitle);
+    if (candTokens.size > 0 && existTokens.size > 0) {
+      let intersection = 0;
+      for (const t of candTokens) {
+        if (existTokens.has(t)) intersection++;
+      }
+      const union = new Set([...candTokens, ...existTokens]).size;
+      const jaccard = union > 0 ? intersection / union : 0;
+      if (jaccard >= 0.7) {
+        score += 45;
+        reasons.push("High keyword similarity");
+      } else if (jaccard >= 0.45) {
+        score += 30;
+        reasons.push("Shared keywords");
+      } else if (jaccard >= 0.25) {
+        score += 15;
+        reasons.push("Some matching keywords");
+      }
+    }
+  }
+
+  // 2. Synonym Cluster Match (up to 15 points)
+  const candSyns = extractSynonyms(candTitle);
+  const existSyns = extractSynonyms(existTitle);
+  for (const s of candSyns) {
+    if (existSyns.has(s)) {
+      score += 15;
+      reasons.push("Same item type");
+      break;
+    }
+  }
+
+  // 3. Brand Match (up to 15 points)
+  const candBrands = extractBrands(candTitle + " " + (candidate.description || ""));
+  const existBrands = extractBrands(existTitle + " " + (existing.description || ""));
+  for (const b of candBrands) {
+    if (existBrands.has(b)) {
+      score += 15;
+      reasons.push(`Same brand: ${b.toUpperCase()}`);
+      break;
+    }
+  }
+
+  // 4. Color Match (up to 10 points)
+  const candColors = extractColors(candTitle + " " + (candidate.description || ""));
+  const existColors = extractColors(existTitle + " " + (existing.description || ""));
+  for (const c of candColors) {
+    if (existColors.has(c)) {
+      score += 10;
+      reasons.push(`Same color: ${c}`);
+      break;
+    }
+  }
+
+  // 5. Category Match (up to 15 points)
+  const candCat = String(candidate.category || candidate.category_name || "").trim().toLowerCase();
+  const existCat = String(existing.category || existing.category_name || "").trim().toLowerCase();
+  if (candCat && existCat && candCat !== "campus report" && existCat !== "campus report") {
+    if (candCat === existCat) {
+      score += 15;
+      reasons.push("Identical category");
+    } else if (candCat.includes(existCat) || existCat.includes(candCat)) {
+      score += 10;
+      reasons.push("Matching category");
+    }
+  }
+
+  // 6. Building / Location Match (up to 10 points)
+  const candBldg = candidate.buildingId ?? candidate.building_id;
+  const existBldg = existing.buildingId ?? existing.building_id;
+  if (candBldg && existBldg && Number(candBldg) === Number(existBldg)) {
+    score += 10;
+    reasons.push("Same building location");
+  }
+
+  const finalScore = Math.max(0, Math.min(100, Math.round(score)));
+  return {
+    score: finalScore,
+    isDuplicate: finalScore >= 60,
+    reasons,
+  };
+}

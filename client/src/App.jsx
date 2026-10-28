@@ -426,6 +426,14 @@ export default function App() {
             loadReports();
             setMessage("Report submitted successfully.");
           }}
+          onViewItem={(itemId) => {
+            setReportOpen(false);
+            apiRequest(`/items/${itemId}`)
+              .then((item) => {
+                if (item) setSelectedItem(item);
+              })
+              .catch(() => {});
+          }}
         />
       )}
 

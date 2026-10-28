@@ -7,6 +7,7 @@ export default function ReportFormModal({
   onClose,
   onSaved,
   initialType = "lost",
+  onViewItem,
 }) {
   const { user } = useAuth();
   const [error, setError] = useState("");
@@ -15,6 +16,14 @@ export default function ReportFormModal({
   const [reportType, setReportType] = useState(initialType || "lost");
   const [submitting, setSubmitting] = useState(false);
   const fileInputRef = useRef(null);
+
+  // Task 18: Live duplicate detection state
+  const [title, setTitle] = useState("");
+  const [category, setCategory] = useState("");
+  const [duplicateWarning, setDuplicateWarning] = useState(null);
+  const [dismissedDuplicateId, setDismissedDuplicateId] = useState(null);
+  const [checkingDuplicate, setCheckingDuplicate] = useState(false);
+  const [allowDuplicateSubmit, setAllowDuplicateSubmit] = useState(false);
 
   // User prefill & privacy preferences (defaults from profile)
   const [reporterName, setReporterName] = useState(user?.name || "");
@@ -70,6 +79,44 @@ export default function ReportFormModal({
     fetchLocations();
     fetchActiveMap();
   }, []);
+
+  // Task 18: Debounced duplicate detection query
+  useEffect(() => {
+    if (!user || !title.trim() || title.trim().length < 3) {
+      setDuplicateWarning(null);
+      return;
+    }
+
+    let isMounted = true;
+    const timer = setTimeout(async () => {
+      setCheckingDuplicate(true);
+      try {
+        const query = new URLSearchParams({
+          title: title.trim(),
+          category: category.trim(),
+          type: reportType,
+          buildingId: selectedBuildingId || "",
+        });
+        const res = await apiRequest(`/reports/check-duplicate?${query.toString()}`);
+        if (isMounted) {
+          if (res?.hasDuplicate && res.duplicate && res.duplicate.id !== dismissedDuplicateId) {
+            setDuplicateWarning(res.duplicate);
+          } else {
+            setDuplicateWarning(null);
+          }
+        }
+      } catch {
+        // Ignore preflight errors
+      } finally {
+        if (isMounted) setCheckingDuplicate(false);
+      }
+    }, 380);
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timer);
+    };
+  }, [title, category, reportType, selectedBuildingId, user, dismissedDuplicateId]);
 
   const currentBuilding = locations.find(
     (b) => String(b.id) === String(selectedBuildingId),
@@ -140,6 +187,18 @@ export default function ReportFormModal({
     const data = Object.fromEntries(formData);
 
     try {
+      // Task 18: Confirm duplicate submit if active duplicate is unaddressed
+      if (duplicateWarning && dismissedDuplicateId !== duplicateWarning.id && !allowDuplicateSubmit) {
+        const proceed = window.confirm(
+          `Possible duplicate detected:\n\nYou already have an active ${duplicateWarning.status} report for "${duplicateWarning.title}".\n\nDo you want to file a new report anyway?`,
+        );
+        if (!proceed) {
+          setSubmitting(false);
+          return;
+        }
+        setAllowDuplicateSubmit(true);
+      }
+
       if (reportType === "found" && activeMap && !pin) {
         throw new Error(
           "Found reports require a map pin pinpointing where the item was found.",
@@ -156,6 +215,9 @@ export default function ReportFormModal({
         method: "POST",
         body: JSON.stringify({
           ...data,
+          title: title.trim(),
+          category: category.trim(),
+          allowDuplicate: Boolean(allowDuplicateSubmit || dismissedDuplicateId === duplicateWarning?.id),
           itemType: reportType,
           dateReported: data.date,
           buildingId: selectedBuildingId
@@ -179,6 +241,11 @@ export default function ReportFormModal({
       });
 
       form.reset();
+      setTitle("");
+      setCategory("");
+      setDuplicateWarning(null);
+      setDismissedDuplicateId(null);
+      setAllowDuplicateSubmit(false);
       setSelectedBuildingId("");
       setSelectedFloorId("");
       setSelectedRoomId("");
@@ -247,6 +314,57 @@ export default function ReportFormModal({
           </div>
         )}
 
+        {/* Task 18: Live Duplicate Warning Card */}
+        {duplicateWarning && dismissedDuplicateId !== duplicateWarning.id && (
+          <div className="duplicate-warning-banner" role="alert">
+            <div className="duplicate-warning-icon">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                <line x1="12" y1="9" x2="12" y2="13" />
+                <line x1="12" y1="17" x2="12.01" y2="17" />
+              </svg>
+            </div>
+            <div className="duplicate-warning-body">
+              <div className="duplicate-warning-title">
+                <span>Possible Duplicate Report Detected</span>
+                <span className="duplicate-confidence-tag">
+                  {duplicateWarning.score}% similarity
+                </span>
+              </div>
+              <p className="duplicate-warning-text">
+                You already have an open{" "}
+                <strong>{duplicateWarning.status === "under_review" ? "Under Review" : "Reported"}</strong>{" "}
+                {reportType} report for{" "}
+                <strong>"{duplicateWarning.title}"</strong> ({duplicateWarning.category || "General"}, reported on {duplicateWarning.dateReported}).
+              </p>
+              <div className="duplicate-warning-actions">
+                {onViewItem && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => {
+                      onClose();
+                      onViewItem(duplicateWarning.id);
+                    }}
+                  >
+                    🔍 View My Existing Report
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => {
+                    setDismissedDuplicateId(duplicateWarning.id);
+                    setAllowDuplicateSubmit(true);
+                  }}
+                >
+                  Dismiss &amp; Continue Submitting
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <form className="report-form" onSubmit={submit}>
           <input type="hidden" name="type" value={reportType} />
 
@@ -263,6 +381,11 @@ export default function ReportFormModal({
                   id="title-input"
                   name="title"
                   required
+                  value={title}
+                  onChange={(e) => {
+                    setTitle(e.target.value);
+                    if (dismissedDuplicateId) setDismissedDuplicateId(null);
+                  }}
                   placeholder="e.g. Black Lenovo Laptop, Stainless Water Bottle"
                 />
                 <span className="field-hint">
@@ -278,6 +401,11 @@ export default function ReportFormModal({
                   id="category-input"
                   name="category"
                   required
+                  value={category}
+                  onChange={(e) => {
+                    setCategory(e.target.value);
+                    if (dismissedDuplicateId) setDismissedDuplicateId(null);
+                  }}
                   placeholder="e.g. Electronics, ID, Keys"
                 />
               </div>

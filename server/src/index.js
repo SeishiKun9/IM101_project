@@ -30,7 +30,7 @@ import {
   validatePassword,
   validateSchoolEmail,
 } from "./utils/validation.js";
-import { calculateMatchScore } from "./utils/matchScorer.js";
+import { calculateMatchScore, calculateDuplicateScore } from "./utils/matchScorer.js";
 import { logAdminAudit } from "./services/audit.js";
 import {
   sendPasswordResetEmail,
@@ -1157,6 +1157,27 @@ app.post(
       return res.status(400).json({
         error: "Report type, title, description, and date are required.",
       });
+    }
+
+    // Task 18: Rapid duplicate submission safeguard (within 2 minutes)
+    if (!req.body.allowDuplicate) {
+      const recentDupRes = await pool.query(
+        `SELECT item_id, title FROM items
+         WHERE reporter_id = $1
+           AND item_type = $2
+           AND LOWER(TRIM(title)) = LOWER(TRIM($3))
+           AND created_at >= NOW() - INTERVAL '2 minutes'
+         LIMIT 1`,
+        [req.user.id, itemType, title.trim()],
+      );
+
+      if (recentDupRes.rows.length) {
+        return res.status(409).json({
+          error: "You submitted an identical report moments ago. If you intended to submit a separate report, please click 'Submit Anyway'.",
+          isDuplicate: true,
+          duplicateId: recentDupRes.rows[0].item_id,
+        });
+      }
     }
 
     // 1. Resolve & Validate Building
@@ -3312,6 +3333,95 @@ app.post(
     } finally {
       client.release();
     }
+  }),
+);
+
+// ==============================================================================
+// Task 18: Duplicate Report Detection Endpoint
+// ==============================================================================
+
+app.get(
+  "/api/reports/check-duplicate",
+  requireDatabase,
+  requireAuth,
+  asyncRoute(async (req, res) => {
+    const { title = "", category = "", type = "lost", buildingId, description = "" } = req.query;
+
+    if (!title || typeof title !== "string" || title.trim().length < 3) {
+      return res.json({ hasDuplicate: false, duplicate: null });
+    }
+
+    const itemType = type === "found" ? "found" : "lost";
+    const parsedBuildingId = buildingId ? parseInt(buildingId, 10) : null;
+
+    // Fetch user's active/open reports of the same type
+    const existingRes = await pool.query(
+      `SELECT
+         i.item_id,
+         i.title,
+         i.description,
+         i.item_type,
+         i.status,
+         i.date_reported,
+         i.building_id,
+         c.category_name AS category,
+         b.name AS building_name
+       FROM items i
+       LEFT JOIN categories c ON c.category_id = i.category_id
+       LEFT JOIN buildings b ON b.building_id = i.building_id
+       WHERE i.reporter_id = $1
+         AND i.item_type = $2
+         AND i.status IN ('reported', 'under_review')
+       ORDER BY i.created_at DESC
+       LIMIT 25`,
+      [req.user.id, itemType],
+    );
+
+    if (!existingRes.rows.length) {
+      return res.json({ hasDuplicate: false, duplicate: null });
+    }
+
+    const candidate = {
+      title: title.trim(),
+      category: (category || "").trim(),
+      description: (description || "").trim(),
+      buildingId: isNaN(parsedBuildingId) ? null : parsedBuildingId,
+    };
+
+    let bestMatch = null;
+    let highestScore = 0;
+
+    for (const item of existingRes.rows) {
+      const result = calculateDuplicateScore(candidate, {
+        title: item.title,
+        category: item.category,
+        description: item.description,
+        buildingId: item.building_id,
+      });
+
+      if (result.isDuplicate && result.score > highestScore) {
+        highestScore = result.score;
+        bestMatch = {
+          id: item.item_id,
+          title: item.title,
+          category: item.category || "General",
+          status: item.status,
+          dateReported: item.date_reported,
+          building: item.building_name || "Campus",
+          score: result.score,
+          reasons: result.reasons,
+        };
+      }
+    }
+
+    if (bestMatch) {
+      return res.json({
+        hasDuplicate: true,
+        duplicate: bestMatch,
+      });
+    }
+
+    res.json({ hasDuplicate: false, duplicate: null });
   }),
 );
 
