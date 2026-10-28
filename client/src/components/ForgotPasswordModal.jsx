@@ -13,6 +13,7 @@ export default function ForgotPasswordModal({ initialToken = "", onClose, onBack
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const [message, setMessage] = useState("");
+  const [dispatchStatus, setDispatchStatus] = useState(null);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [resetSuccess, setResetSuccess] = useState(false);
@@ -28,6 +29,7 @@ export default function ForgotPasswordModal({ initialToken = "", onClose, onBack
     event.preventDefault();
     setError("");
     setMessage("");
+    setDispatchStatus(null);
 
     const emailVal = validateSchoolEmail(email, { requireSchoolDomain: false });
     if (!emailVal.valid) {
@@ -43,8 +45,9 @@ export default function ForgotPasswordModal({ initialToken = "", onClose, onBack
       });
       setMessage(
         result.message ||
-          "If that account exists, password reset instructions have been emailed to your address.",
+          "Password reset instructions have been dispatched.",
       );
+      setDispatchStatus(result);
       if (result.resetToken) {
         setToken(result.resetToken);
       }
@@ -125,6 +128,16 @@ export default function ForgotPasswordModal({ initialToken = "", onClose, onBack
         {message && (
           <div className="alert-banner alert-success">
             <strong>Notice:</strong> {message}
+            {dispatchStatus?.simulated && (
+              <p style={{ margin: "8px 0 0", fontSize: "12px", opacity: 0.9 }}>
+                💡 <em>Development Mode:</em> SMTP is not configured in <code>.env</code>, so your reset token was auto-filled below and logged to the server terminal. To receive real emails in your personal inbox, add your SMTP credentials (e.g. Gmail App Password) to <code>.env</code>.
+              </p>
+            )}
+            {dispatchStatus?.emailSent && (
+              <p style={{ margin: "8px 0 0", fontSize: "12px", opacity: 0.9 }}>
+                ✉️ An email was sent to <strong>{email}</strong>. Please check your inbox and spam folder.
+              </p>
+            )}
           </div>
         )}
 

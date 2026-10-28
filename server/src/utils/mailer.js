@@ -1,18 +1,36 @@
 import nodemailer from "nodemailer";
 
-// Retrieve email configuration from environment variables
-const smtpHost = process.env.SMTP_HOST || "";
-const smtpPort = Number(process.env.SMTP_PORT || 587);
-const smtpUser = process.env.SMTP_USER || "";
-const smtpPass = process.env.SMTP_PASS || "";
+// Retrieve email configuration with flexible fallbacks
+const smtpService = (process.env.SMTP_SERVICE || process.env.EMAIL_SERVICE || "").trim().toLowerCase();
+const smtpHost = (process.env.SMTP_HOST || process.env.EMAIL_HOST || "").trim();
+const smtpPort = Number(process.env.SMTP_PORT || process.env.EMAIL_PORT || 587);
+const smtpUser = (process.env.SMTP_USER || process.env.EMAIL_USER || process.env.MAIL_USER || "").trim();
+const rawPass = process.env.SMTP_PASS || process.env.EMAIL_PASS || process.env.MAIL_PASS || process.env.EMAIL_PASSWORD || "";
+// Strip any spaces from app passwords (e.g. Google's 16-letter App Password display "xxxx xxxx xxxx xxxx")
+const smtpPass = rawPass.replace(/\s+/g, "");
 const smtpSecure = process.env.SMTP_SECURE === "true" || smtpPort === 465;
 const defaultFrom =
   process.env.SMTP_FROM ||
-  '"Campus Lost & Found" <no-reply@campuslostandfound.edu>';
+  (smtpUser ? `"Campus Lost & Found" <${smtpUser}>` : '"Campus Lost & Found" <no-reply@campuslostandfound.edu>');
 
 let transporter = null;
+let transportProvider = "none";
 
-if (smtpHost && smtpUser && smtpPass) {
+// 1. Check if Gmail service is requested or user is a gmail address without a host
+const isGmail = smtpService === "gmail" || (!smtpHost && smtpUser.toLowerCase().endsWith("@gmail.com"));
+
+if (isGmail && smtpUser && smtpPass) {
+  transportProvider = "gmail";
+  transporter = nodemailer.createTransport({
+    service: "gmail",
+    auth: {
+      user: smtpUser,
+      pass: smtpPass,
+    },
+  });
+  console.log(`[Email] Mailer configured with Gmail service for: ${smtpUser}`);
+} else if (smtpHost && smtpUser && smtpPass) {
+  transportProvider = "smtp";
   transporter = nodemailer.createTransport({
     host: smtpHost,
     port: smtpPort,
@@ -25,11 +43,57 @@ if (smtpHost && smtpUser && smtpPass) {
       rejectUnauthorized: process.env.NODE_ENV === "production",
     },
   });
-  console.log(`[Email] Mailer initialized with SMTP host: ${smtpHost}:${smtpPort}`);
+  console.log(`[Email] Mailer configured with custom SMTP host: ${smtpHost}:${smtpPort}`);
 } else {
   console.log(
-    "[Email] SMTP credentials not set. Email delivery will run in mock/console mode.",
+    "[Email] SMTP credentials not set in .env. Email delivery will run in mock/console mode.",
   );
+}
+
+// Background verification of SMTP connection
+if (transporter) {
+  transporter.verify((err) => {
+    if (err) {
+      console.warn(`[Email Warning] SMTP connection test failed: ${err.message}. If using Gmail, make sure you use an App Password, not your regular password.`);
+    } else {
+      console.log("[Email] SMTP connection verified successfully! Ready to deliver real emails.");
+    }
+  });
+}
+
+/**
+ * Returns current mailer configuration status.
+ */
+export function getMailerStatus() {
+  const isConfigured = Boolean(transporter);
+  return {
+    configured: isConfigured,
+    provider: transportProvider,
+    service: isGmail ? "gmail" : (smtpService || null),
+    host: smtpHost || (isGmail ? "smtp.gmail.com" : null),
+    port: isGmail ? 465 : smtpPort,
+    user: smtpUser ? `${smtpUser.slice(0, 3)}***@${smtpUser.split("@")[1] || ""}` : null,
+    from: defaultFrom,
+  };
+}
+
+/**
+ * Tests connection to the configured SMTP transporter.
+ */
+export async function verifyMailerConnection() {
+  if (!transporter) {
+    return {
+      success: false,
+      configured: false,
+      error: "No SMTP credentials configured in .env (SMTP_USER / SMTP_PASS).",
+    };
+  }
+  try {
+    await transporter.verify();
+    return { success: true, configured: true, provider: transportProvider };
+  } catch (err) {
+    return { success: false, configured: true, error: err.message };
+  }
 }
 
 /**
@@ -46,7 +110,7 @@ function getAppUrl(customUrl) {
 /**
  * Core send mail dispatcher with graceful fallback.
  */
-async function sendMail({ to, subject, html, text }) {
+export async function sendMail({ to, subject, html, text }) {
   if (!to) {
     console.warn("[Email] Cannot send email: recipient address is empty.");
     return { success: false, error: "No recipient address provided" };
@@ -62,24 +126,30 @@ async function sendMail({ to, subject, html, text }) {
         text,
       });
       console.log(`[Email] Message sent to ${to}: ${info.messageId}`);
-      return { success: true, messageId: info.messageId };
+      return { success: true, messageId: info.messageId, provider: transportProvider, to };
     } catch (err) {
       console.error(`[Email] Failed sending mail to ${to}:`, err.message);
       // Fallback: log to console so production admins can still retrieve reset tokens or notices
-      console.log(`[Email Fallback - Failed SMTP Delivery to ${to}]:\nSubject: ${subject}\nText:\n${text}`);
-      return { success: false, error: err.message };
+      console.log(`\n=======================================================`);
+      console.log(`[EMAIL FALLBACK - FAILED SMTP DELIVERY TO ${to}]`);
+      console.log(`Subject: ${subject}`);
+      console.log(`Error: ${err.message}`);
+      console.log(`-------------------------------------------------------`);
+      console.log(text);
+      console.log(`=======================================================\n`);
+      return { success: false, error: err.message, simulated: true, to };
     }
   }
 
   // Development & Unconfigured Fallback
   console.log("\n=======================================================");
-  console.log(`[EMAIL DISPATCH - CONSOLE FALLBACK]`);
+  console.log(`[EMAIL DISPATCH - CONSOLE FALLBACK (NO SMTP IN .ENV)]`);
   console.log(`To: ${to}`);
   console.log(`Subject: ${subject}`);
   console.log("-------------------------------------------------------");
   console.log(text);
   console.log("=======================================================\n");
-  return { success: true, simulated: true };
+  return { success: true, simulated: true, provider: "console_fallback", to };
 }
 
 /**
@@ -133,7 +203,7 @@ function wrapHtmlEmail({ title, preheader, bodyContent, ctaText, ctaLink, footer
 }
 
 /**
- * Sends a password reset email containing the security token and direct reset link.
+ * 1. Sends a password reset email containing the security token and direct reset link.
  */
 export async function sendPasswordResetEmail({ to, name = "Campus User", resetToken, appUrl }) {
   const base = getAppUrl(appUrl);
@@ -184,7 +254,7 @@ Campus Lost & Found System`;
 }
 
 /**
- * Sends an email notification when a staff verifier approves or rejects a claim.
+ * 2. Sends an email notification when a staff verifier approves or rejects a claim.
  */
 export async function sendClaimDecisionEmail({
   to,
@@ -268,7 +338,7 @@ Campus Lost & Found System`;
 }
 
 /**
- * Sends an email notification when a found item is verified and matched to a user's lost report.
+ * 3. Sends an email notification when a found item is verified and matched to a user's lost report.
  */
 export async function sendItemMatchedEmail({
   to,
@@ -320,7 +390,7 @@ Campus Lost & Found System`;
 }
 
 /**
- * Sends an email confirmation after an item is handed over and marked collected.
+ * 4. Sends an email confirmation after an item is handed over and marked collected.
  */
 export async function sendItemHandoverEmail({
   to,
@@ -350,6 +420,89 @@ Thank you for using Campus Lost & Found!`;
       title: subject,
       bodyContent,
       ctaText: "Return to Campus Lost & Found",
+      ctaLink: base,
+    }),
+    text,
+  });
+}
+
+/**
+ * 5. Sends an email notification when a staff member comments on a claim messaging thread.
+ */
+export async function sendClaimMessageEmail({
+  to,
+  name = "Claimant",
+  senderName,
+  senderRole,
+  itemTitle,
+  claimId,
+  messageText,
+  appUrl,
+}) {
+  const base = getAppUrl(appUrl);
+  const claimLink = `${base}/?claim=${claimId}`;
+  const subject = `New Message on Claim #${claimId} ("${itemTitle}")`;
+  const bodyContent = `
+    <p>Hello <strong>${name}</strong>,</p>
+    <p>You have a new message from <strong>${senderName}</strong> (${senderRole}) regarding your claim for <strong>"${itemTitle}"</strong>:</p>
+    
+    <div style="background: #f8fafc; border-left: 4px solid #166534; padding: 14px 16px; margin: 18px 0; border-radius: 4px; font-style: italic; color: #1e293b;">
+      "${messageText}"
+    </div>
+
+    <p>Please log in to your dashboard to view the message thread and reply.</p>
+  `;
+
+  const text = `Hello ${name},
+
+You received a message from ${senderName} (${senderRole}) regarding Claim #${claimId} ("${itemTitle}"):
+
+"${messageText}"
+
+Reply on the dashboard:
+${claimLink}
+
+Campus Lost & Found System`;
+
+  return sendMail({
+    to,
+    subject,
+    html: wrapHtmlEmail({
+      title: subject,
+      bodyContent,
+      ctaText: "Reply to Message",
+      ctaLink: claimLink,
+    }),
+    text,
+  });
+}
+
+/**
+ * 6. Sends a test email to verify SMTP delivery.
+ */
+export async function sendTestEmail({ to, appUrl }) {
+  const base = getAppUrl(appUrl);
+  const subject = "Test Email - Campus Lost & Found Mailer Configuration";
+  const bodyContent = `
+    <p>Hello!</p>
+    <p>This is a verification test email from your <strong>Campus Lost & Found</strong> server.</p>
+    <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 14px 16px; margin: 18px 0; color: #166534;">
+      ✓ <strong>SMTP Configuration is Working!</strong> Emails can now be delivered to student and staff inboxes.
+    </div>
+    <p>Timestamp: <strong>${new Date().toUTCString()}</strong></p>
+  `;
+
+  const text = `Test Email - Campus Lost & Found
+SMTP is working successfully! Ready to deliver notifications.
+Timestamp: ${new Date().toUTCString()}`;
+
+  return sendMail({
+    to,
+    subject,
+    html: wrapHtmlEmail({
+      title: subject,
+      bodyContent,
+      ctaText: "Open Campus Lost & Found",
       ctaLink: base,
     }),
     text,

@@ -36,6 +36,10 @@ import {
   sendClaimDecisionEmail,
   sendItemMatchedEmail,
   sendItemHandoverEmail,
+  sendClaimMessageEmail,
+  sendTestEmail,
+  getMailerStatus,
+  verifyMailerConnection,
 } from "./utils/mailer.js";
 
 const { Pool } = pg;
@@ -688,11 +692,16 @@ app.post(
       .trim()
       .toLowerCase();
     const user = await findUser(email);
-    const response = {
-      message:
-        "If that account exists, password reset instructions have been created.",
-    };
-    if (!user) return res.json(response);
+    if (!user) {
+      if (process.env.NODE_ENV !== "production") {
+        return res.status(404).json({
+          error: `No registered account found with email "${email}". Please verify your email or sign up first.`,
+        });
+      }
+      return res.json({
+        message: "If that account exists, password reset instructions have been dispatched.",
+      });
+    }
 
     const resetToken = crypto.randomBytes(32).toString("hex");
     const tokenHash = crypto
@@ -704,16 +713,32 @@ app.post(
       [tokenHash, user.user_id],
     );
 
-    // Send password reset email asynchronously
+    // Send password reset email
     const appUrl = req.headers.origin || req.headers.referer;
-    sendPasswordResetEmail({
+    const mailResult = await sendPasswordResetEmail({
       to: user.email,
       name: user.name,
       resetToken,
       appUrl,
-    }).catch((err) => console.error("[Mailer Error]:", err));
+    }).catch((err) => {
+      console.error("[Mailer Error]:", err);
+      return { success: false, error: err.message };
+    });
 
-    if (process.env.NODE_ENV !== "production") response.resetToken = resetToken;
+    const isSimulated = Boolean(mailResult?.simulated);
+    const response = {
+      message: isSimulated
+        ? "Password reset token generated. (SMTP is not configured in .env, so the token was logged to the server console and auto-filled below for local testing)."
+        : `Password reset instructions have been sent to ${user.email}. Please check your inbox and spam folder.`,
+      emailSent: !isSimulated && Boolean(mailResult?.success),
+      simulated: isSimulated,
+      provider: mailResult?.provider || "none",
+    };
+
+    if (process.env.NODE_ENV !== "production") {
+      response.resetToken = resetToken;
+      response.resetLink = `${appUrl || "http://localhost:3000"}/?resetToken=${encodeURIComponent(resetToken)}`;
+    }
     res.json(response);
   }),
 );
@@ -1320,11 +1345,13 @@ app.post(
         `SELECT i.item_id, i.reporter_id, i.title, i.description, i.date_reported,
                 c.category_name AS category,
                 COALESCE(b.name, i.location_snapshot->>'buildingName') AS building,
-                COALESCE(r.name, i.location_description, i.location_snapshot->>'roomName') AS location
+                COALESCE(r.name, i.location_description, i.location_snapshot->>'roomName') AS location,
+                u.email AS reporter_email, u.name AS reporter_name
          FROM items i
          JOIN categories c ON c.category_id = i.category_id
          LEFT JOIN buildings b ON b.building_id = i.building_id
          LEFT JOIN rooms r ON r.room_id = i.room_id
+         LEFT JOIN users u ON u.user_id = i.reporter_id
          WHERE i.item_type = $1 AND i.status IN ('reported', 'under_review') AND i.reporter_id IS NOT NULL`,
         [targetOppositeType],
       );
@@ -1363,6 +1390,19 @@ app.post(
               link: `/?item=${newItemId}`,
               itemId: newItemId,
             });
+
+            // Also dispatch email alert to the lost item reporter!
+            if (candidate.reporter_email) {
+              const appUrl = req.headers.origin || req.headers.referer;
+              sendItemMatchedEmail({
+                to: candidate.reporter_email,
+                name: candidate.reporter_name || "Campus Reporter",
+                lostTitle: candidate.title,
+                foundTitle: title.trim(),
+                itemId: newItemId,
+                appUrl,
+              }).catch((err) => console.error("[Mailer Error]:", err));
+            }
           } else {
             // Lost item reported -> Alert the reporter that a matching item was already found!
             await createNotification(client, {
@@ -1373,6 +1413,18 @@ app.post(
               link: `/?item=${candidate.item_id}`,
               itemId: candidate.item_id,
             });
+
+            if (req.user.email) {
+              const appUrl = req.headers.origin || req.headers.referer;
+              sendItemMatchedEmail({
+                to: req.user.email,
+                name: req.user.name || "Campus Reporter",
+                lostTitle: title.trim(),
+                foundTitle: candidate.title,
+                itemId: candidate.item_id,
+                appUrl,
+              }).catch((err) => console.error("[Mailer Error]:", err));
+            }
           }
         }
       }
@@ -1880,6 +1932,22 @@ app.post(
         link: `/?claim=${claim.id}`,
         itemId: claim.itemId,
       });
+
+      // Email the claimant when staff leaves a question/comment
+      const claimantUser = await pool.query("SELECT email, name FROM users WHERE user_id = $1", [claim.claimantId]);
+      if (claimantUser.rows[0]?.email) {
+        const appUrl = req.headers.origin || req.headers.referer;
+        sendClaimMessageEmail({
+          to: claimantUser.rows[0].email,
+          name: claimantUser.rows[0].name,
+          senderName: req.user.name,
+          senderRole: req.user.role === "admin" ? "Campus Administrator" : "Campus Verifier",
+          itemTitle: claim.itemTitle || `Item #${claim.itemId}`,
+          claimId: claim.id,
+          messageText: text,
+          appUrl,
+        }).catch((err) => console.error("[Mailer Error]:", err));
+      }
     } else {
       if (claim.reviewedBy) {
         await createNotification(pool, {
@@ -2451,6 +2519,37 @@ app.post(
     }
 
     res.json({ ok: true });
+  }),
+);
+
+// Mailer status check & test dispatch (Admin / Staff)
+app.get(
+  "/api/admin/mailer/status",
+  requireDatabase,
+  requireAuth,
+  requireRole("staff", "admin"),
+  asyncRoute(async (req, res) => {
+    const status = getMailerStatus();
+    const verification = await verifyMailerConnection();
+    res.json({ ...status, connection: verification });
+  }),
+);
+
+app.post(
+  "/api/admin/mailer/test",
+  requireDatabase,
+  requireAuth,
+  requireRole("staff", "admin"),
+  asyncRoute(async (req, res) => {
+    const targetEmail = String(req.body.to || req.user.email || "").trim();
+    if (!targetEmail) {
+      return res
+        .status(400)
+        .json({ error: "Target recipient email address is required." });
+    }
+    const appUrl = req.headers.origin || req.headers.referer;
+    const result = await sendTestEmail({ to: targetEmail, appUrl });
+    res.json(result);
   }),
 );
 
