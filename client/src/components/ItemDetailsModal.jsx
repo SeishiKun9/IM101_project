@@ -75,13 +75,22 @@ export default function ItemDetailsModal({
     ? item.privateReporterName || item.reporterName
     : item.reporterName;
 
-  const isClosed = ["claimed", "completed"].includes(item.status);
-  const isFound = item.status === "found";
-  const isUnderReview = item.status === "under_review";
+  const hasApprovedClaim = (item.claims || []).some(
+    (c) => c.status === "approved" || c.status === "claimed",
+  );
+  const effectiveStatus =
+    item.status === "found" && hasApprovedClaim ? "claimed" : item.status;
+
+  const isCompleted = ["completed", "closed", "returned"].includes(effectiveStatus);
+  const isClaimApproved = effectiveStatus === "claimed";
+  const isFound = effectiveStatus === "found";
+  const isUnderReview = effectiveStatus === "under_review";
 
   let statusClass = "status-neutral";
-  if (isClosed) {
+  if (isCompleted) {
     statusClass = "status-success";
+  } else if (isClaimApproved) {
+    statusClass = "status-blue";
   } else if (isFound) {
     statusClass = "status-amber";
   } else if (isUnderReview) {
@@ -180,7 +189,7 @@ export default function ItemDetailsModal({
             {item.type === "lost" ? "LOST REPORT" : "FOUND REPORT"}
           </span>
           <span className={`status-badge ${statusClass}`}>
-            {statusText(item.status)}
+            {statusText(effectiveStatus)}
           </span>
         </div>
 
@@ -188,22 +197,24 @@ export default function ItemDetailsModal({
           {item.title}
         </h2>
 
-        {statusMessage(item.status) && (
+        {statusMessage(effectiveStatus, item.type) && (
           <div
             className={`detail-notice-banner ${
-              isFound
-                ? "notice-amber"
-                : isClosed
+              isCompleted
+                ? "notice-success"
+                : isClaimApproved
                   ? "notice-success"
-                  : "notice-info"
+                  : isFound
+                    ? (item.type === "found" ? "notice-info" : "notice-amber")
+                    : "notice-info"
             }`}
           >
             <div className="notice-icon">
-              {isFound ? "★" : isClosed ? "✓" : "ℹ"}
+              {isCompleted || isClaimApproved ? "✓" : isFound ? "★" : "ℹ"}
             </div>
             <div className="notice-content">
               <strong>Status Update:</strong>
-              <p>{statusMessage(item.status)}</p>
+              <p>{statusMessage(effectiveStatus, item.type)}</p>
             </div>
           </div>
         )}

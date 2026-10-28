@@ -35,10 +35,30 @@ export function statusText(status) {
   return statusNames[status] || status;
 }
 
-export function statusMessage(status) {
+export function statusMessage(status, itemType = "lost") {
+  if (itemType === "found") {
+    switch (status) {
+      case "reported":
+        return "Thank you for reporting! Please bring the item to the CSA office for verification.";
+      case "under_review":
+        return "Staff is currently verifying this found item submission.";
+      case "found":
+        return "You handed it over to CSA. Thank you for cooperating!";
+      case "claimed":
+        return "Claim approved by CSA verifier. Item is scheduled for claimant collection.";
+      case "completed":
+        return "Item has been returned to its verified owner. Thank you for your cooperation!";
+      case "rejected":
+        return "This report was rejected after review.";
+      default:
+        return statusMessages[status] || "";
+    }
+  }
+
   return statusMessages[status] || "";
 }
 
 export function claimStatusText(status) {
   return claimStatusNames[status] || status;
 }
+

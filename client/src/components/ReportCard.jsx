@@ -17,13 +17,25 @@ export default function ReportCard({
     ? item.privateReporterName || item.reporterName
     : item.reporterName;
 
-  const isClosed = ["claimed", "completed"].includes(item.status);
-  const isFound = item.status === "found";
-  const isUnderReview = item.status === "under_review";
+  const hasApprovedClaim = (item.claims || []).some(
+    (c) => c.status === "approved" || c.status === "claimed",
+  );
+  const hasActiveClaim = (item.claims || []).some((c) =>
+    ["pending", "approved", "claimed"].includes(c.status),
+  );
+  const effectiveStatus =
+    item.status === "found" && hasApprovedClaim ? "claimed" : item.status;
+
+  const isCompleted = ["completed", "closed", "returned"].includes(effectiveStatus);
+  const isClaimApproved = effectiveStatus === "claimed";
+  const isFound = effectiveStatus === "found";
+  const isUnderReview = effectiveStatus === "under_review";
 
   let statusClass = "status-neutral";
-  if (isClosed) {
+  if (isCompleted) {
     statusClass = "status-success";
+  } else if (isClaimApproved) {
+    statusClass = "status-blue";
   } else if (isFound) {
     statusClass = "status-amber";
   } else if (isUnderReview) {
@@ -42,11 +54,13 @@ export default function ReportCard({
   const foundSteps = [
     { key: "reported", label: "Reported" },
     { key: "under_review", label: "Under Review" },
+    { key: "found", label: "Turned Over to CSA" },
+    { key: "claimed", label: "Claim Approved" },
     { key: "completed", label: "Handed Over" },
   ];
 
   const currentSteps = item.type === "lost" ? lostSteps : foundSteps;
-  const currentStepIndex = currentSteps.findIndex((s) => s.key === item.status);
+  const currentStepIndex = currentSteps.findIndex((s) => s.key === effectiveStatus);
 
   return (
     <article
@@ -100,7 +114,7 @@ export default function ReportCard({
               {item.type === "lost" ? "LOST REPORT" : "FOUND REPORT"}
             </span>
             <span className={`status-badge ${statusClass}`}>
-              {statusText(item.status)}
+              {statusText(effectiveStatus)}
             </span>
             {item.category && (
               <span className="item-category-tag">{item.category}</span>
@@ -171,8 +185,9 @@ export default function ReportCard({
 
         <div className="client-report-actions">
           {item.type === "lost" &&
-            item.status === "found" &&
-            item.matchedFoundId && (
+            effectiveStatus === "found" &&
+            item.matchedFoundId &&
+            !hasActiveClaim && (
               <button
                 className="btn btn-primary btn-sm full"
                 onClick={(event) => {
@@ -219,24 +234,49 @@ export default function ReportCard({
 
       {/* Status Notice Notes & Claim info */}
       {isFound && (
-        <div className="client-report-note notice-amber">
-          <strong>Action Needed:</strong> {statusMessage("found")}
+        <div
+          className={`client-report-note ${
+            item.type === "found" ? "notice-info" : "notice-amber"
+          }`}
+        >
+          {item.type === "found" ? (
+            <>
+              <strong>Status Update:</strong> You handed it over to CSA. Thank you for cooperating!
+            </>
+          ) : !hasActiveClaim ? (
+            <>
+              <strong>Action Needed:</strong> Your item has been found! Please submit a claim request to arrange collection at CSA.
+            </>
+          ) : (
+            <>
+              <strong>Status Update:</strong> Your claim request is being reviewed by CSA staff.
+            </>
+          )}
         </div>
       )}
 
       {isUnderReview && (
         <div className="client-report-note notice-info">
-          <strong>Under Review:</strong> {statusMessage("under_review")}
+          <strong>Under Review:</strong> {statusMessage("under_review", item.type)}
         </div>
       )}
 
-      {isClosed && (
+      {isClaimApproved && (
         <div className="client-report-note notice-success">
-          <strong>Outcome:</strong> {statusMessage("completed")}
+          <strong>Claim Approved:</strong>{" "}
+          {item.type === "found"
+            ? "Claim approved by CSA verifier. Item is scheduled for claimant collection."
+            : "Your claim has been approved! Proceed to CSA for ownership verification and collection."}
         </div>
       )}
 
-      {item.type === "found" && item.status === "reported" && (
+      {isCompleted && (
+        <div className="client-report-note notice-success">
+          <strong>Outcome:</strong> {statusMessage("completed", item.type)}
+        </div>
+      )}
+
+      {item.type === "found" && effectiveStatus === "reported" && (
         <div className="client-report-note notice-info">
           This submission is pending CSA / Verifier confirmation.
         </div>

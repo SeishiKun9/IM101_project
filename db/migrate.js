@@ -419,6 +419,39 @@ export async function runMigrations(customPool = null) {
       console.warn("Migration 005 warning:", err.message);
     }
 
+    // Status consistency sync for existing items with approved/claimed claims
+    try {
+      await client.query(`
+        UPDATE items
+        SET status = 'claimed'
+        WHERE status = 'found'
+          AND (
+            item_id IN (SELECT item_id FROM claims WHERE status = 'approved')
+            OR item_id IN (
+              SELECT matched_lost_id FROM items
+              WHERE item_id IN (SELECT item_id FROM claims WHERE status = 'approved')
+                AND matched_lost_id IS NOT NULL
+            )
+            OR matched_found_id IN (SELECT item_id FROM claims WHERE status = 'approved')
+          );
+
+        UPDATE items
+        SET status = 'completed'
+        WHERE status != 'completed'
+          AND (
+            item_id IN (SELECT item_id FROM claims WHERE status = 'claimed')
+            OR item_id IN (
+              SELECT matched_lost_id FROM items
+              WHERE item_id IN (SELECT item_id FROM claims WHERE status = 'claimed')
+                AND matched_lost_id IS NOT NULL
+            )
+            OR matched_found_id IN (SELECT item_id FROM claims WHERE status = 'claimed')
+          );
+      `);
+    } catch (err) {
+      console.warn("Status consistency sync warning:", err.message);
+    }
+
     console.log("Database migrations applied and verified successfully!");
   } finally {
     client.release();

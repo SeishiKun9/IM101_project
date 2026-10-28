@@ -2315,6 +2315,37 @@ app.post(
           .json({ error: "Only pending claims can be decided." });
       }
 
+      if (decision === "approved") {
+        await client.query(
+          `UPDATE items
+           SET status = 'claimed'
+           WHERE item_id = $1
+              OR matched_lost_id = $1
+              OR matched_found_id = $1
+              OR item_id IN (SELECT matched_lost_id FROM items WHERE item_id = $1 AND matched_lost_id IS NOT NULL)
+              OR item_id IN (SELECT matched_found_id FROM items WHERE item_id = $1 AND matched_found_id IS NOT NULL)`,
+          [prevClaim.item_id],
+        );
+      } else if (decision === "rejected") {
+        const otherApproved = await client.query(
+          "SELECT claim_id FROM claims WHERE item_id = $1 AND status = 'approved' AND claim_id != $2",
+          [prevClaim.item_id, req.params.claimId],
+        );
+        if (!otherApproved.rows.length) {
+          await client.query(
+            `UPDATE items
+             SET status = 'found'
+             WHERE (item_id = $1
+                OR matched_lost_id = $1
+                OR matched_found_id = $1
+                OR item_id IN (SELECT matched_lost_id FROM items WHERE item_id = $1 AND matched_lost_id IS NOT NULL)
+                OR item_id IN (SELECT matched_found_id FROM items WHERE item_id = $1 AND matched_found_id IS NOT NULL))
+               AND status = 'claimed'`,
+            [prevClaim.item_id],
+          );
+        }
+      }
+
       await logStatusChange(client, {
         actor: req.user,
         action: decision === "approved" ? "APPROVE" : "REJECT",
@@ -2396,7 +2427,13 @@ app.post(
       [req.user.id, req.params.claimId],
     );
     await pool.query(
-      "UPDATE items SET status = 'completed', collection_date = now(), collected_by = $1 WHERE item_id = $2 OR matched_lost_id = $2 OR matched_found_id = $2",
+      `UPDATE items
+       SET status = 'completed', collection_date = now(), collected_by = $1
+       WHERE item_id = $2
+          OR matched_lost_id = $2
+          OR matched_found_id = $2
+          OR item_id IN (SELECT matched_lost_id FROM items WHERE item_id = $2 AND matched_lost_id IS NOT NULL)
+          OR item_id IN (SELECT matched_found_id FROM items WHERE item_id = $2 AND matched_found_id IS NOT NULL)`,
       [req.user.id, result.rows[0].item_id],
     );
 
