@@ -2957,10 +2957,41 @@ app.get(
   requireDatabase,
   requireRole("admin"),
   asyncRoute(async (req, res) => {
-    const result = await pool.query(
-      `SELECT ${publicItemFields}, i.reporter_name AS "privateReporterName", i.contact_phone AS "contactPhone", i.is_anonymous AS "isAnonymous", i.hide_phone AS "hidePhone" FROM items i ${itemLocationJoins} ORDER BY i.created_at DESC LIMIT 100`,
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50));
+    const offset = (page - 1) * limit;
+
+    const countResult = await pool.query(
+      `SELECT COUNT(*)::int AS total FROM items i ${itemLocationJoins}`,
     );
-    res.json(result.rows);
+    const total = countResult.rows[0]?.total || 0;
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+
+    const result = await pool.query(
+      `SELECT ${publicItemFields}, i.reporter_name AS "privateReporterName", i.contact_phone AS "contactPhone", i.is_anonymous AS "isAnonymous", i.hide_phone AS "hidePhone" FROM items i ${itemLocationJoins} ORDER BY i.created_at DESC LIMIT $1 OFFSET $2`,
+      [limit, offset],
+    );
+
+    res.set("X-Total-Count", String(total));
+    res.set("X-Total-Pages", String(totalPages));
+    res.set("X-Current-Page", String(page));
+
+    // Support legacy array format if requested
+    if (req.query.format === "array") {
+      return res.json(result.rows);
+    }
+
+    res.json({
+      items: result.rows,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages,
+        hasNext: page < totalPages,
+        hasPrev: page > 1,
+      },
+    });
   }),
 );
 

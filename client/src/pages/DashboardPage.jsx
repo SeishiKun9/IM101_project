@@ -138,6 +138,18 @@ export default function DashboardPage({
 
   const pageNumbers = getPageNumbers(page, totalPages);
 
+  function handlePageChange(newPage) {
+    if (newPage < 1 || newPage > totalPages || newPage === page) return;
+    setPage?.(newPage);
+    document.getElementById("browse")?.scrollIntoView({ behavior: "smooth" });
+  }
+
+  function handleLimitChange(newLimit) {
+    setLimit?.(newLimit);
+    setPage?.(1);
+    document.getElementById("browse")?.scrollIntoView({ behavior: "smooth" });
+  }
+
   return (
     <div className="dashboard-page">
       {/* Welcoming Hero Section */}
@@ -542,7 +554,7 @@ export default function DashboardPage({
               <button
                 type="button"
                 className="pagination-btn"
-                onClick={() => setPage?.(page - 1)}
+                onClick={() => handlePageChange(page - 1)}
                 disabled={!pagination.hasPrev || loading}
                 aria-label="Previous page"
               >
@@ -559,7 +571,7 @@ export default function DashboardPage({
                     key={p}
                     type="button"
                     className={`pagination-btn ${p === page ? "active" : ""}`}
-                    onClick={() => setPage?.(p)}
+                    onClick={() => handlePageChange(p)}
                     disabled={loading}
                   >
                     {p}
@@ -570,7 +582,7 @@ export default function DashboardPage({
               <button
                 type="button"
                 className="pagination-btn"
-                onClick={() => setPage?.(page + 1)}
+                onClick={() => handlePageChange(page + 1)}
                 disabled={!pagination.hasNext || loading}
                 aria-label="Next page"
               >
@@ -583,10 +595,7 @@ export default function DashboardPage({
               <select
                 className="toolbar-select limit-select"
                 value={limit}
-                onChange={(e) => {
-                  setLimit?.(Number(e.target.value));
-                  setPage?.(1);
-                }}
+                onChange={(e) => handleLimitChange(Number(e.target.value))}
                 aria-label="Items per page"
               >
                 <option value={12}>12 / page</option>
