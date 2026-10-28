@@ -82,6 +82,27 @@ if (pool) {
         })
         .catch(() => {});
     });
+
+  // Ensure database-backed rate limiting table exists and schedule periodic pruning (Task 22)
+  pool
+    .query(`
+      CREATE TABLE IF NOT EXISTS rate_limits (
+        key VARCHAR(255) PRIMARY KEY,
+        points INTEGER NOT NULL DEFAULT 1,
+        expire_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_rate_limits_expire ON rate_limits (expire_at);
+    `)
+    .catch((err) => {
+      console.warn("Notice: Failed to initialize rate_limits table:", err?.message || err);
+    });
+
+  setInterval(() => {
+    pool
+      .query("DELETE FROM rate_limits WHERE expire_at < NOW()")
+      .catch(() => {});
+  }, 15 * 60 * 1000).unref();
 }
 
 // Configure reverse proxy trust (Render HTTPS)
@@ -208,51 +229,101 @@ function requireDatabase(req, res, next) {
     return res.status(503).json({ error: "Database is not configured." });
   next();
 }
-// Rate limiter store for sensitive authentication endpoints (Item 2B)
-const rateLimitStore = new Map();
+// Rate limiter store with PostgreSQL backing & in-memory fallback (Task 22)
+const rateLimitMemoryStore = new Map();
+
+// Periodic sweep for memory fallback store (every 10 minutes)
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, record] of rateLimitMemoryStore.entries()) {
+    if (now > record.resetTime) {
+      rateLimitMemoryStore.delete(key);
+    }
+  }
+}, 10 * 60 * 1000).unref();
+
+function inMemoryRateLimit(key, windowMs, max, message, res, next) {
+  const now = Date.now();
+  let record = rateLimitMemoryStore.get(key);
+  if (!record || now > record.resetTime) {
+    record = { count: 1, resetTime: now + windowMs };
+    rateLimitMemoryStore.set(key, record);
+    return next();
+  }
+
+  record.count += 1;
+  if (record.count > max) {
+    const retryAfterSec = Math.max(1, Math.ceil((record.resetTime - now) / 1000));
+    res.setHeader("Retry-After", retryAfterSec);
+    return res.status(429).json({
+      error: message,
+      retryAfterSeconds: retryAfterSec,
+    });
+  }
+
+  next();
+}
 
 function createRateLimiter({
   windowMs = 15 * 60 * 1000,
   max = 10,
   message = "Too many attempts from this IP. Please wait a few minutes before trying again.",
+  keyPrefix = "",
 } = {}) {
-  // Periodically sweep expired entries (every 10 minutes)
-  setInterval(() => {
-    const now = Date.now();
-    for (const [key, record] of rateLimitStore.entries()) {
-      if (now > record.resetTime) {
-        rateLimitStore.delete(key);
-      }
-    }
-  }, 10 * 60 * 1000).unref();
-
-  return (req, res, next) => {
-    const ip =
+  return async (req, res, next) => {
+    const forwarded = req.headers["x-forwarded-for"];
+    const ip = (
       req.ip ||
-      req.headers["x-forwarded-for"] ||
-      req.socket.remoteAddress ||
-      "client";
-    const key = `${req.baseUrl || ""}${req.path}:${ip}`;
-    const now = Date.now();
+      (typeof forwarded === "string" ? forwarded.split(",")[0].trim() : req.socket.remoteAddress) ||
+      "client"
+    ).toString().trim();
 
-    let record = rateLimitStore.get(key);
-    if (!record || now > record.resetTime) {
-      record = { count: 1, resetTime: now + windowMs };
-      rateLimitStore.set(key, record);
-      return next();
+    const routeKey = keyPrefix || `${req.baseUrl || ""}${req.path}`;
+    const key = `${routeKey}:${ip}`;
+
+    if (!pool) {
+      return inMemoryRateLimit(key, windowMs, max, message, res, next);
     }
 
-    record.count += 1;
-    if (record.count > max) {
-      const retryAfterSec = Math.ceil((record.resetTime - now) / 1000);
-      res.setHeader("Retry-After", retryAfterSec);
-      return res.status(429).json({
-        error: message,
-        retryAfterSeconds: retryAfterSec,
-      });
-    }
+    try {
+      const expireAt = new Date(Date.now() + windowMs);
+      const query = `
+        INSERT INTO rate_limits (key, points, expire_at, updated_at)
+        VALUES ($1, 1, $2, NOW())
+        ON CONFLICT (key) DO UPDATE
+        SET
+          points = CASE
+            WHEN rate_limits.expire_at <= NOW() THEN 1
+            ELSE rate_limits.points + 1
+          END,
+          expire_at = CASE
+            WHEN rate_limits.expire_at <= NOW() THEN $2
+            ELSE rate_limits.expire_at
+          END,
+          updated_at = NOW()
+        RETURNING points, expire_at;
+      `;
+      const result = await pool.query(query, [key, expireAt]);
+      const row = result.rows[0];
+      if (!row) {
+        return next();
+      }
 
-    next();
+      if (row.points > max) {
+        const rowExpireMs = new Date(row.expire_at).getTime();
+        const retryAfterSec = Math.max(1, Math.ceil((rowExpireMs - Date.now()) / 1000));
+        res.setHeader("Retry-After", retryAfterSec);
+        return res.status(429).json({
+          error: message,
+          retryAfterSeconds: retryAfterSec,
+        });
+      }
+
+      next();
+    } catch (err) {
+      // In case of a temporary database issue, fall back to in-memory store without breaking requests
+      inMemoryRateLimit(key, windowMs, max, message, res, next);
+    }
   };
 }
 
@@ -809,6 +880,7 @@ app.post(
 
 app.post(
   "/api/auth/reset-password",
+  authRateLimiter,
   requireDatabase,
   asyncRoute(async (req, res) => {
     const { token, password } = req.body;

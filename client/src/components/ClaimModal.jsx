@@ -156,58 +156,76 @@ export default function ClaimModal({ item, onClose, onSubmitted }) {
               />
 
               {imagePreview ? (
-                <div className="evidence-preview-box">
-                  <img
-                    src={imagePreview}
-                    alt="Uploaded proof preview"
-                    className="evidence-img-preview"
-                  />
-                  <div className="evidence-preview-actions">
+                <div className="evidence-preview-card">
+                  <div className="evidence-preview-top">
+                    <span className="evidence-attached-tag">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                      Photo Evidence Attached
+                    </span>
+                    <span className="evidence-ready-hint">Ready for verifier inspection</span>
+                  </div>
+
+                  <div className="evidence-media-wrapper">
+                    <img
+                      src={imagePreview}
+                      alt="Uploaded proof preview"
+                      className="evidence-img-display"
+                    />
+                  </div>
+
+                  <div className="evidence-actions-bar">
                     <button
                       type="button"
-                      className="btn btn-secondary btn-xs"
+                      className="btn btn-secondary btn-sm"
                       onClick={() => fileInputRef.current?.click()}
                     >
                       Change Photo
                     </button>
                     <button
                       type="button"
-                      className="btn btn-danger btn-xs"
+                      className="btn btn-danger btn-sm"
                       onClick={handleRemoveImage}
                     >
-                      Remove
+                      Remove Photo
                     </button>
                   </div>
                 </div>
               ) : (
-                <button
-                  type="button"
-                  className="upload-drop-btn"
+                <div
+                  className="photo-upload-dropzone evidence-upload-dropzone"
                   onClick={() => fileInputRef.current?.click()}
-                  disabled={compressing}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      fileInputRef.current?.click();
+                    }
+                  }}
                 >
                   <svg
-                    width="24"
-                    height="24"
+                    className="upload-icon"
+                    width="32"
+                    height="32"
                     viewBox="0 0 24 24"
                     fill="none"
                     stroke="currentColor"
-                    strokeWidth="2"
+                    strokeWidth="1.8"
                     strokeLinecap="round"
                     strokeLinejoin="round"
-                    aria-hidden="true"
                   >
                     <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
                     <circle cx="8.5" cy="8.5" r="1.5" />
                     <polyline points="21 15 16 10 5 21" />
                   </svg>
-                  <span>
-                    {compressing
-                      ? "Optimizing photo..."
-                      : "Upload Photo or Receipt (Optional)"}
+                  <span className="upload-title">
+                    {compressing ? "Optimizing image..." : "Click to attach photo evidence or receipt"}
                   </span>
-                  <small>Supports JPEG, PNG, WebP</small>
-                </button>
+                  <span className="upload-subtitle">
+                    Receipt, Photo in Possession, Serial No., or School ID (JPG, PNG, WebP)
+                  </span>
+                </div>
               )}
             </div>
           </div>

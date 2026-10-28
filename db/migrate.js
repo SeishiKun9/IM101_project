@@ -438,6 +438,17 @@ export async function runMigrations(customPool = null) {
       console.warn("Migration 005 warning:", err.message);
     }
 
+    // 006: Persistent Rate Limits
+    try {
+      const sql006Path = path.join(__dirname, "006_rate_limits.sql");
+      if (fs.existsSync(sql006Path)) {
+        const sql006 = fs.readFileSync(sql006Path, "utf8");
+        await client.query(sql006);
+      }
+    } catch (err) {
+      console.warn("Migration 006 warning:", err.message);
+    }
+
     // Status consistency sync for existing items with approved/claimed claims
     try {
       await client.query(`

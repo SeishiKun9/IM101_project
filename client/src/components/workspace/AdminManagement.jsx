@@ -18,10 +18,10 @@ export default function AdminManagement() {
     try {
       const [nextUsers, nextItems] = await Promise.all([
         apiRequest("/admin/users"),
-        apiRequest("/admin/items"),
+        apiRequest("/admin/items?limit=200"),
       ]);
-      setUsers(nextUsers);
-      setItems(nextItems);
+      setUsers(Array.isArray(nextUsers) ? nextUsers : (nextUsers?.users || []));
+      setItems(Array.isArray(nextItems) ? nextItems : (nextItems?.items || []));
       setError("");
     } catch (requestError) {
       setError(requestError.message);
@@ -70,11 +70,14 @@ export default function AdminManagement() {
     }
   }
 
-  const staffUsers = users.filter((u) => u.role === "staff");
-  const studentUsers = users.filter(
+  const safeUsers = Array.isArray(users) ? users : [];
+  const safeItems = Array.isArray(items) ? items : [];
+
+  const staffUsers = safeUsers.filter((u) => u.role === "staff");
+  const studentUsers = safeUsers.filter(
     (u) => u.role === "student" || (!["staff", "admin"].includes(u.role)),
   );
-  const adminUsers = users.filter((u) => u.role === "admin");
+  const adminUsers = safeUsers.filter((u) => u.role === "admin");
 
   const filteredStudents = studentUsers.filter((u) => {
     if (!studentSearch.trim()) return true;
@@ -85,7 +88,7 @@ export default function AdminManagement() {
     );
   });
 
-  const filteredItems = items.filter((item) => {
+  const filteredItems = safeItems.filter((item) => {
     if (!reportSearch.trim()) return true;
     const q = reportSearch.toLowerCase();
     return (

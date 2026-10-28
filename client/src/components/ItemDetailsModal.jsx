@@ -82,6 +82,7 @@ export default function ItemDetailsModal({
     item.status === "found" && hasApprovedClaim ? "claimed" : item.status;
 
   const isCompleted = ["completed", "closed", "returned"].includes(effectiveStatus);
+  const isClosed = isCompleted;
   const isClaimApproved = effectiveStatus === "claimed";
   const isFound = effectiveStatus === "found";
   const isUnderReview = effectiveStatus === "under_review";

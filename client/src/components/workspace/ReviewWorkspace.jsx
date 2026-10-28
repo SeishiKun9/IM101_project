@@ -8,6 +8,7 @@ import {
 import { formatLocation } from "../../utils/location.js";
 import AdminAccountForm from "./AdminAccountForm.jsx";
 import AdminManagement from "./AdminManagement.jsx";
+import ErrorBoundary from "../ErrorBoundary.jsx";
 import AuditLogManagement from "./AuditLogManagement.jsx";
 import ClaimConversationModal from "../ClaimConversationModal.jsx";
 import CompareModal from "./CompareModal.jsx";
@@ -65,7 +66,13 @@ export default function ReviewWorkspace({ user, onChanged }) {
     setRefreshing(true);
     try {
       const data = await apiRequest("/review/queue");
-      setQueue(data);
+      setQueue({
+        items: Array.isArray(data?.items) ? data.items : [],
+        lost: Array.isArray(data?.lost) ? data.lost : [],
+        claims: Array.isArray(data?.claims) ? data.claims : [],
+        cases: Array.isArray(data?.cases) ? data.cases : [],
+        unclaimed: Array.isArray(data?.unclaimed) ? data.unclaimed : [],
+      });
       setError("");
     } catch (requestError) {
       setError(requestError.message);
@@ -1372,7 +1379,11 @@ export default function ReviewWorkspace({ user, onChanged }) {
 
           {isAdmin && activeTab === "accounts" && <AdminAccountForm />}
 
-          {isAdmin && activeTab === "system" && <AdminManagement />}
+          {isAdmin && activeTab === "system" && (
+            <ErrorBoundary title="System Management">
+              <AdminManagement />
+            </ErrorBoundary>
+          )}
 
           {isAdmin && activeTab === "audit" && <AuditLogManagement />}
         </main>

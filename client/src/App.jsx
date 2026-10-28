@@ -13,6 +13,7 @@ import ClaimModal from "./components/ClaimModal.jsx";
 import ForgotPasswordModal from "./components/ForgotPasswordModal.jsx";
 import Header from "./components/Header.jsx";
 import ItemDetailsModal from "./components/ItemDetailsModal.jsx";
+import ErrorBoundary from "./components/ErrorBoundary.jsx";
 import ReportFormModal from "./components/ReportFormModal.jsx";
 import Toast from "./components/Toast.jsx";
 import { useAuth } from "./context/AuthContext.jsx";
@@ -438,42 +439,57 @@ export default function App() {
       )}
 
       {selectedItem && (
-        <ItemDetailsModal
-          item={selectedItem}
-          showPrivate={Boolean(
-            user && reports.some((report) => report.id === selectedItem.id),
-          )}
-          onClaim={claimItem}
-          onClose={() => setSelectedItem(null)}
-          onSelectSimilar={(item) => setSelectedItem(item)}
-        />
+        <ErrorBoundary
+          title="Item Details"
+          onReset={() => setSelectedItem(null)}
+        >
+          <ItemDetailsModal
+            item={selectedItem}
+            showPrivate={Boolean(
+              user && reports.some((report) => report.id === selectedItem.id),
+            )}
+            onClaim={claimItem}
+            onClose={() => setSelectedItem(null)}
+            onSelectSimilar={(item) => setSelectedItem(item)}
+          />
+        </ErrorBoundary>
       )}
 
       {claimModalItem && (
-        <ClaimModal
-          item={claimModalItem}
-          onClose={() => setClaimModalItem(null)}
-          onSubmitted={(res) => {
-            setClaimModalItem(null);
-            loadReports();
-            loadItems();
-            setMessage("Claim request submitted successfully for verifier review.");
-            if (res?.claimId) {
-              setActiveChatClaimId(res.claimId);
-            }
-          }}
-        />
+        <ErrorBoundary
+          title="Claim Request"
+          onReset={() => setClaimModalItem(null)}
+        >
+          <ClaimModal
+            item={claimModalItem}
+            onClose={() => setClaimModalItem(null)}
+            onSubmitted={(res) => {
+              setClaimModalItem(null);
+              loadReports();
+              loadItems();
+              setMessage("Claim request submitted successfully for verifier review.");
+              if (res?.claimId) {
+                setActiveChatClaimId(res.claimId);
+              }
+            }}
+          />
+        </ErrorBoundary>
       )}
 
       {activeChatClaimId && (
-        <ClaimConversationModal
-          claimId={activeChatClaimId}
-          onClose={() => setActiveChatClaimId(null)}
-          onClaimUpdated={() => {
-            loadReports();
-            loadItems();
-          }}
-        />
+        <ErrorBoundary
+          title="Claim Conversation"
+          onReset={() => setActiveChatClaimId(null)}
+        >
+          <ClaimConversationModal
+            claimId={activeChatClaimId}
+            onClose={() => setActiveChatClaimId(null)}
+            onClaimUpdated={() => {
+              loadReports();
+              loadItems();
+            }}
+          />
+        </ErrorBoundary>
       )}
     </>
   );
