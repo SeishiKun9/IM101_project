@@ -12,6 +12,7 @@ import AuditLogManagement from "./AuditLogManagement.jsx";
 import ClaimConversationModal from "../ClaimConversationModal.jsx";
 import CompareModal from "./CompareModal.jsx";
 import LocationMapManagement from "./LocationMapManagement.jsx";
+import ExportDataModal from "./ExportDataModal.jsx";
 
 export default function ReviewWorkspace({ user, onChanged }) {
   const [queue, setQueue] = useState({
@@ -23,6 +24,7 @@ export default function ReviewWorkspace({ user, onChanged }) {
   const [selected, setSelected] = useState(null);
   const [selectedLost, setSelectedLost] = useState(null);
   const [selectedChatClaimId, setSelectedChatClaimId] = useState(null);
+  const [exportModalDataset, setExportModalDataset] = useState(null);
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState("compare"); // "compare" | "claims" | "cases" | "locations" | "accounts" | "system" | "audit"
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -346,11 +348,11 @@ export default function ReviewWorkspace({ user, onChanged }) {
           </div>
           <button
             className="btn btn-secondary btn-sm"
-            onClick={exportReportsCsv}
+            onClick={() => setExportModalDataset("items")}
             type="button"
-            title="Download full lost & found registry as CSV spreadsheet"
+            title="Open Data Export & Reporting Center (CSV / Printable Summary)"
           >
-            📥 Export Reports CSV
+            📥 Export Data / Reports
           </button>
           <button
             className="btn btn-secondary btn-sm"
@@ -793,9 +795,9 @@ export default function ReviewWorkspace({ user, onChanged }) {
                 <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
                   <button
                     className="btn btn-secondary btn-sm"
-                    onClick={exportReportsCsv}
+                    onClick={() => setExportModalDataset("items")}
                     type="button"
-                    title="Export complete reports registry as CSV spreadsheet"
+                    title="Open Data Export & Reporting Center"
                   >
                     📥 Export Registry CSV
                   </button>
@@ -879,6 +881,15 @@ export default function ReviewWorkspace({ user, onChanged }) {
           }}
           onMatch={handleMatch}
           onReviewStatus={reviewSelectedMatch}
+        />
+      )}
+
+      {/* Data Export & Reporting Center Modal */}
+      {exportModalDataset && (
+        <ExportDataModal
+          user={user}
+          initialDataset={exportModalDataset}
+          onClose={() => setExportModalDataset(null)}
         />
       )}
 

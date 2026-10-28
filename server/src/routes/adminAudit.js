@@ -71,7 +71,7 @@ export function createAdminAuditRouter({
         escapeCsv(log.description),
       ]);
 
-      const csvContent = [headers.join(","), ...rows.map((r) => r.join(","))].join("\r\n");
+      const csvContent = "\uFEFF" + [headers.join(","), ...rows.map((r) => r.join(","))].join("\r\n");
       const filename = `audit-logs-${new Date().toISOString().slice(0, 10)}.csv`;
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
       res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);

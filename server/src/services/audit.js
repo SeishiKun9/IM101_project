@@ -445,7 +445,8 @@ export async function getAuditLogs(pool, queryParams = {}) {
     sortOrder = "DESC",
   } = queryParams;
 
-  const validLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+  const maxLimit = queryParams.export === 'true' || parseInt(limit, 10) > 100 ? 10000 : 100;
+  const validLimit = Math.min(maxLimit, Math.max(1, parseInt(limit, 10) || 20));
   const validPage = Math.max(1, parseInt(page, 10) || 1);
   const offset = (validPage - 1) * validLimit;
 
@@ -500,14 +501,17 @@ export async function getAuditLogs(pool, queryParams = {}) {
     conditions.push(`LOWER(a.entity_type) = $${values.length}`);
   }
 
-  if (startDate && startDate.trim()) {
-    values.push(startDate.trim());
-    conditions.push(`a.created_at >= $${values.length}::timestamptz`);
+  const effectiveStartDate = startDate || queryParams.start_date || queryParams.from;
+  const effectiveEndDate = endDate || queryParams.end_date || queryParams.to;
+
+  if (effectiveStartDate && effectiveStartDate.trim()) {
+    values.push(effectiveStartDate.trim());
+    conditions.push(`a.created_at >= ${values.length}::timestamptz`);
   }
 
-  if (endDate && endDate.trim()) {
-    values.push(endDate.trim());
-    conditions.push(`a.created_at <= $${values.length}::timestamptz`);
+  if (effectiveEndDate && effectiveEndDate.trim()) {
+    values.push(effectiveEndDate.trim());
+    conditions.push(`a.created_at <= (${values.length}::date + INTERVAL '1 day')`);
   }
 
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";

@@ -2604,7 +2604,21 @@ app.get(
     }
     if (req.query.status && req.query.status !== "all") {
       values.push(req.query.status);
-      where.push(`i.status = $${values.length}`);
+      where.push(`i.status = ${values.length}`);
+    }
+    if (req.query.building && req.query.building !== "all") {
+      values.push(req.query.building);
+      where.push(`(b.name = ${values.length} OR i.location_snapshot->>'buildingName' = ${values.length} OR l.building = ${values.length})`);
+    }
+    const startDate = req.query.startDate || req.query.start_date || req.query.from;
+    const endDate = req.query.endDate || req.query.end_date || req.query.to;
+    if (startDate) {
+      values.push(startDate);
+      where.push(`(i.date_reported >= ${values.length}::timestamptz OR i.created_at >= ${values.length}::timestamptz)`);
+    }
+    if (endDate) {
+      values.push(endDate);
+      where.push(`(i.date_reported <= (${values.length}::date + INTERVAL '1 day') OR i.created_at <= (${values.length}::date + INTERVAL '1 day'))`);
     }
     const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
@@ -2686,6 +2700,121 @@ app.get(
     res.send(csvOutput);
   }),
 );
+
+// Full CSV export for claims and handovers (Task 14)
+app.get(
+  "/api/admin/export/claims-csv",
+  requireDatabase,
+  requireAuth,
+  requireRole("staff", "admin"),
+  asyncRoute(async (req, res) => {
+    const values = [];
+    const where = [];
+
+    if (req.query.status && req.query.status !== "all") {
+      values.push(req.query.status);
+      where.push(`c.status = ${values.length}`);
+    }
+
+    const startDate = req.query.startDate || req.query.start_date || req.query.from;
+    const endDate = req.query.endDate || req.query.end_date || req.query.to;
+
+    if (startDate) {
+      values.push(startDate);
+      where.push(`c.claim_date >= ${values.length}::timestamptz`);
+    }
+    if (endDate) {
+      values.push(endDate);
+      where.push(`c.claim_date <= (${values.length}::date + INTERVAL '1 day')`);
+    }
+
+    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
+    const result = await pool.query(
+      `SELECT
+         c.claim_id,
+         c.status,
+         c.claim_date,
+         c.item_id,
+         i.title AS item_title,
+         i.item_type,
+         cat.category_name,
+         u.name AS claimant_name,
+         u.email AS claimant_email,
+         u.contact_number AS claimant_phone,
+         r.name AS reviewer_name,
+         c.reviewed_at,
+         c.rejection_reason,
+         c.collection_date,
+         col.name AS collected_by_name
+       FROM claims c
+       LEFT JOIN items i ON i.item_id = c.item_id
+       LEFT JOIN categories cat ON cat.category_id = i.category_id
+       LEFT JOIN users u ON u.user_id = c.claimant_id
+       LEFT JOIN users r ON r.user_id = c.reviewed_by
+       LEFT JOIN users col ON col.user_id = c.collected_by
+       ${whereSql}
+       ORDER BY c.claim_id DESC`,
+      values,
+    );
+
+    function escapeCsv(val) {
+      if (val === null || val === undefined) return '""';
+      const str = String(val).replace(/"/g, '""');
+      return `"${str}"`;
+    }
+
+    const headers = [
+      "Claim ID",
+      "Status",
+      "Claim Date",
+      "Item ID",
+      "Item Title",
+      "Item Type",
+      "Category",
+      "Claimant Name",
+      "Claimant Email",
+      "Claimant Phone",
+      "Reviewed By",
+      "Reviewed At",
+      "Rejection Reason",
+      "Collection Date",
+      "Handover Verifier",
+    ];
+
+    const lines = [headers.join(",")];
+    for (const row of result.rows) {
+      lines.push(
+        [
+          row.claim_id,
+          escapeCsv(row.status),
+          escapeCsv(row.claim_date ? new Date(row.claim_date).toISOString().slice(0, 10) : ""),
+          row.item_id,
+          escapeCsv(row.item_title),
+          escapeCsv(row.item_type),
+          escapeCsv(row.category_name),
+          escapeCsv(row.claimant_name),
+          escapeCsv(row.claimant_email),
+          escapeCsv(row.claimant_phone),
+          escapeCsv(row.reviewer_name),
+          escapeCsv(row.reviewed_at ? new Date(row.reviewed_at).toISOString().slice(0, 16).replace("T", " ") : ""),
+          escapeCsv(row.rejection_reason),
+          escapeCsv(row.collection_date ? new Date(row.collection_date).toISOString().slice(0, 16).replace("T", " ") : ""),
+          escapeCsv(row.collected_by_name),
+        ].join(","),
+      );
+    }
+
+    const csvOutput = "\uFEFF" + lines.join("\r\n");
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="campus_claims_export_${new Date().toISOString().slice(0, 10)}.csv"`,
+    );
+    res.send(csvOutput);
+  }),
+);
+
 
 app.post(
   "/api/admin/accounts",
