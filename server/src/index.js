@@ -726,13 +726,17 @@ app.post(
     });
 
     const isSimulated = Boolean(mailResult?.simulated);
+    const deliveredTo = mailResult?.to || user.email;
     const response = {
       message: isSimulated
-        ? "Password reset token generated. (SMTP is not configured in .env, so the token was logged to the server console and auto-filled below for local testing)."
-        : `Password reset instructions have been sent to ${user.email}. Please check your inbox and spam folder.`,
+        ? "Password reset token generated. (No mail provider credentials in .env, so the token was logged to the server console and auto-filled below for local testing)."
+        : (mailResult?.note
+            ? `Password reset instructions sent! ${mailResult.note}`
+            : `Password reset instructions have been sent to ${deliveredTo}. Please check your inbox and spam folder.`),
       emailSent: !isSimulated && Boolean(mailResult?.success),
       simulated: isSimulated,
       provider: mailResult?.provider || "none",
+      recipient: deliveredTo,
     };
 
     if (process.env.NODE_ENV !== "production") {

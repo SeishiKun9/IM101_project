@@ -231,6 +231,41 @@ export async function sendMail({ to, subject, html, text }) {
         return { success: true, messageId: data.id, provider: "resend", to };
       } else {
         const errorMsg = data?.message || data?.error || response.statusText || "Resend API error";
+
+        // Check if Resend testing sandbox restricted the recipient
+        const sandboxMatch = errorMsg.match(/send testing emails to your own email address \(([^)]+)\)/i);
+        if (sandboxMatch && sandboxMatch[1] && sandboxMatch[1].toLowerCase() !== to.toLowerCase()) {
+          const verifiedEmail = sandboxMatch[1].trim();
+          console.warn(`[Resend Sandbox Notice] Target recipient ${to} is unverified on Resend. Re-routing test email to verified account: ${verifiedEmail}`);
+
+          const fallbackRes = await fetch("https://api.resend.com/emails", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${config.resendApiKey}`,
+            },
+            body: JSON.stringify({
+              from,
+              to: [verifiedEmail],
+              subject: `[For ${to}] ${subject}`,
+              html: `<div style="background:#fef3c7;border-left:4px solid #f59e0b;padding:12px;margin-bottom:16px;border-radius:4px;color:#92400e;font-size:13px;"><strong>Resend Sandbox Notice:</strong> This test email was requested for <strong>${to}</strong>, but delivered to your verified Resend account (<strong>${verifiedEmail}</strong>) because Resend sandbox mode only delivers to the account owner.</div>${html}`,
+              text: `[Originally requested for ${to} - delivered to your verified Resend address ${verifiedEmail}]\n\n${text}`,
+            }),
+          });
+          const fallbackData = await fallbackRes.json().catch(() => ({}));
+          if (fallbackRes.ok && fallbackData?.id) {
+            console.log(`[Email via Resend] Successfully routed to verified account ${verifiedEmail}: ${fallbackData.id}`);
+            return {
+              success: true,
+              messageId: fallbackData.id,
+              provider: "resend",
+              to: verifiedEmail,
+              routedFrom: to,
+              note: `Delivered to ${verifiedEmail} (Resend sandbox delivers to your verified account).`,
+            };
+          }
+        }
+
         console.error(`[Email via Resend Error] Failed to send to ${to}:`, errorMsg);
         console.log(`\n=======================================================`);
         console.log(`[EMAIL FALLBACK - FAILED RESEND DELIVERY TO ${to}]`);
