@@ -6,9 +6,9 @@ let cachedSignature = "";
 let currentProvider = "none";
 
 /**
- * Dynamically resolves or refreshes the SMTP transporter from environment variables.
+ * Dynamically resolves or refreshes the email provider from environment variables.
  */
-export function getTransporter() {
+export function getEmailConfig() {
   if (process.env.NODE_ENV !== "production") {
     try {
       dotenv.config({ override: true });
@@ -16,6 +16,12 @@ export function getTransporter() {
       // ignore
     }
   }
+
+  const resendApiKey = (process.env.RESEND_API_KEY || "").trim();
+  const hasResend =
+    resendApiKey &&
+    !resendApiKey.startsWith("PASTE_YOUR_") &&
+    !resendApiKey.startsWith("re_xxxx");
 
   const smtpService = (process.env.SMTP_SERVICE || process.env.EMAIL_SERVICE || "").trim().toLowerCase();
   const smtpHost = (process.env.SMTP_HOST || process.env.EMAIL_HOST || "").trim();
@@ -25,20 +31,12 @@ export function getTransporter() {
   const smtpPass = rawPass.replace(/\s+/g, "");
   const smtpSecure = process.env.SMTP_SECURE === "true" || smtpPort === 465;
 
-  const signature = `${smtpService}|${smtpHost}|${smtpPort}|${smtpUser}|${smtpPass}|${smtpSecure}`;
+  const hasSmtp =
+    smtpUser &&
+    smtpPass &&
+    !smtpPass.startsWith("PASTE_YOUR_") &&
+    !smtpPass.startsWith("xxxx");
 
-  if (cachedTransporter && signature === cachedSignature) {
-    return {
-      transporter: cachedTransporter,
-      provider: currentProvider,
-      service: smtpService,
-      host: smtpHost,
-      port: smtpPort,
-      user: smtpUser,
-    };
-  }
-
-  // Auto-detect Gmail or Google Workspace accounts (e.g. hnu.edu.ph, gmail.com, or no host specified)
   const isGmail =
     smtpService === "gmail" ||
     (!smtpHost &&
@@ -46,85 +44,136 @@ export function getTransporter() {
         smtpUser.toLowerCase().includes("@hnu.edu.ph") ||
         !smtpHost));
 
-  const hasValidPass =
-    smtpPass &&
-    !smtpPass.startsWith("PASTE_YOUR_") &&
-    !smtpPass.startsWith("xxxx");
+  return {
+    resendApiKey: hasResend ? resendApiKey : null,
+    resendFrom: process.env.RESEND_FROM || "Campus Lost & Found <onboarding@resend.dev>",
+    hasResend,
+    hasSmtp,
+    isGmail,
+    smtpService,
+    smtpHost,
+    smtpPort,
+    smtpUser,
+    smtpPass,
+    smtpSecure,
+  };
+}
 
-  if (smtpUser && hasValidPass) {
-    if (isGmail) {
+export function getTransporter() {
+  const config = getEmailConfig();
+
+  if (config.hasResend) {
+    return {
+      provider: "resend",
+      resendApiKey: config.resendApiKey,
+      resendFrom: config.resendFrom,
+    };
+  }
+
+  if (config.hasSmtp) {
+    const signature = `${config.smtpService}|${config.smtpHost}|${config.smtpPort}|${config.smtpUser}|${config.smtpPass}`;
+    if (cachedTransporter && signature === cachedSignature) {
+      return {
+        transporter: cachedTransporter,
+        provider: currentProvider,
+        smtpUser: config.smtpUser,
+      };
+    }
+
+    if (config.isGmail) {
       currentProvider = "gmail";
       cachedTransporter = nodemailer.createTransport({
         service: "gmail",
         auth: {
-          user: smtpUser,
-          pass: smtpPass,
+          user: config.smtpUser,
+          pass: config.smtpPass,
         },
       });
-      console.log(`[Email] Mailer active with Gmail/Google Workspace service for: ${smtpUser}`);
-    } else if (smtpHost) {
+      console.log(`[Email] Mailer active with Gmail/Google Workspace service for: ${config.smtpUser}`);
+    } else if (config.smtpHost) {
       currentProvider = "smtp";
       cachedTransporter = nodemailer.createTransport({
-        host: smtpHost,
-        port: smtpPort,
-        secure: smtpSecure,
+        host: config.smtpHost,
+        port: config.smtpPort,
+        secure: config.smtpSecure,
         auth: {
-          user: smtpUser,
-          pass: smtpPass,
+          user: config.smtpUser,
+          pass: config.smtpPass,
         },
         tls: {
           rejectUnauthorized: process.env.NODE_ENV === "production",
         },
       });
-      console.log(`[Email] Mailer active with custom SMTP host: ${smtpHost}:${smtpPort}`);
+      console.log(`[Email] Mailer active with custom SMTP host: ${config.smtpHost}:${config.smtpPort}`);
     }
     cachedSignature = signature;
-  } else {
-    cachedTransporter = null;
-    cachedSignature = "";
-    currentProvider = "none";
+    return {
+      transporter: cachedTransporter,
+      provider: currentProvider,
+      smtpUser: config.smtpUser,
+    };
   }
 
-  return {
-    transporter: cachedTransporter,
-    provider: currentProvider,
-    service: isGmail ? "gmail" : (smtpService || null),
-    host: smtpHost || (isGmail ? "smtp.gmail.com" : null),
-    port: isGmail ? 465 : smtpPort,
-    user: smtpUser || null,
-  };
+  return { provider: "none", transporter: null };
 }
 
 /**
  * Returns current mailer configuration status.
  */
 export function getMailerStatus() {
-  const { transporter, provider, service, host, port, user } = getTransporter();
+  const config = getEmailConfig();
+  if (config.hasResend) {
+    return {
+      configured: true,
+      provider: "resend",
+      service: "resend",
+      user: "Resend API",
+      from: config.resendFrom,
+    };
+  }
+
+  const { transporter, provider, smtpUser } = getTransporter();
   const defaultFrom =
     process.env.SMTP_FROM ||
-    (user ? `"Campus Lost & Found" <${user}>` : '"Campus Lost & Found" <no-reply@campuslostandfound.edu>');
+    (smtpUser ? `"Campus Lost & Found" <${smtpUser}>` : '"Campus Lost & Found" <no-reply@campuslostandfound.edu>');
 
   return {
     configured: Boolean(transporter),
     provider,
-    service,
-    host,
-    port,
-    user: user ? `${user.slice(0, 3)}***@${user.split("@")[1] || ""}` : null,
+    service: config.isGmail ? "gmail" : (config.smtpService || null),
+    host: config.smtpHost || (config.isGmail ? "smtp.gmail.com" : null),
+    port: config.isGmail ? 465 : config.smtpPort,
+    user: smtpUser ? `${smtpUser.slice(0, 3)}***@${smtpUser.split("@")[1] || ""}` : null,
     from: defaultFrom,
   };
 }
 
 /**
- * Tests connection to the configured SMTP transporter.
+ * Tests connection to the configured email provider.
  */
 export async function verifyMailerConnection() {
+  const config = getEmailConfig();
+  if (config.hasResend) {
+    try {
+      const res = await fetch("https://api.resend.com/api-keys", {
+        headers: { Authorization: `Bearer ${config.resendApiKey}` },
+      });
+      if (res.ok) {
+        return { success: true, configured: true, provider: "resend" };
+      }
+      const data = await res.json().catch(() => ({}));
+      return { success: false, configured: true, error: data.message || "Invalid Resend API Key" };
+    } catch (err) {
+      return { success: false, configured: true, error: err.message };
+    }
+  }
+
   const { transporter, provider } = getTransporter();
   if (!transporter) {
     return {
       success: false,
       configured: false,
-      error: "No SMTP credentials configured in .env (SMTP_USER / SMTP_PASS).",
+      error: "No email service configured in .env (RESEND_API_KEY or SMTP_USER/SMTP_PASS).",
     };
   }
   try {
@@ -155,10 +204,54 @@ export async function sendMail({ to, subject, html, text }) {
     return { success: false, error: "No recipient address provided" };
   }
 
-  const { transporter, provider, user } = getTransporter();
+  const config = getEmailConfig();
+
+  // 1. Send via Resend HTTP API
+  if (config.hasResend) {
+    try {
+      const from = config.resendFrom;
+      const response = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${config.resendApiKey}`,
+        },
+        body: JSON.stringify({
+          from,
+          to: [to],
+          subject,
+          html,
+          text,
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (response.ok && data?.id) {
+        console.log(`[Email via Resend] Message sent to ${to}: ${data.id}`);
+        return { success: true, messageId: data.id, provider: "resend", to };
+      } else {
+        const errorMsg = data?.message || data?.error || response.statusText || "Resend API error";
+        console.error(`[Email via Resend Error] Failed to send to ${to}:`, errorMsg);
+        console.log(`\n=======================================================`);
+        console.log(`[EMAIL FALLBACK - FAILED RESEND DELIVERY TO ${to}]`);
+        console.log(`Subject: ${subject}`);
+        console.log(`Error: ${errorMsg}`);
+        console.log(`-------------------------------------------------------`);
+        console.log(text);
+        console.log(`=======================================================\n`);
+        return { success: false, error: errorMsg, simulated: true, to };
+      }
+    } catch (err) {
+      console.error(`[Email via Resend Network Error] Failed to send to ${to}:`, err.message);
+      return { success: false, error: err.message, simulated: true, to };
+    }
+  }
+
+  // 2. Send via SMTP / Gmail
+  const { transporter, provider, smtpUser } = getTransporter();
   const defaultFrom =
     process.env.SMTP_FROM ||
-    (user ? `"Campus Lost & Found" <${user}>` : '"Campus Lost & Found" <no-reply@campuslostandfound.edu>');
+    (smtpUser ? `"Campus Lost & Found" <${smtpUser}>` : '"Campus Lost & Found" <no-reply@campuslostandfound.edu>');
 
   if (transporter) {
     try {
@@ -169,11 +262,10 @@ export async function sendMail({ to, subject, html, text }) {
         html,
         text,
       });
-      console.log(`[Email] Message sent to ${to}: ${info.messageId}`);
+      console.log(`[Email via SMTP] Message sent to ${to}: ${info.messageId}`);
       return { success: true, messageId: info.messageId, provider, to };
     } catch (err) {
-      console.error(`[Email] Failed sending mail to ${to}:`, err.message);
-      // Fallback: log to console so production admins can still retrieve reset tokens or notices
+      console.error(`[Email via SMTP] Failed sending mail to ${to}:`, err.message);
       console.log(`\n=======================================================`);
       console.log(`[EMAIL FALLBACK - FAILED SMTP DELIVERY TO ${to}]`);
       console.log(`Subject: ${subject}`);
@@ -185,9 +277,9 @@ export async function sendMail({ to, subject, html, text }) {
     }
   }
 
-  // Development & Unconfigured Fallback
+  // 3. Fallback: Log to console in dev mode
   console.log("\n=======================================================");
-  console.log(`[EMAIL DISPATCH - CONSOLE FALLBACK (NO SMTP IN .ENV)]`);
+  console.log(`[EMAIL DISPATCH - CONSOLE FALLBACK (NO EMAIL SERVICE IN .ENV)]`);
   console.log(`To: ${to}`);
   console.log(`Subject: ${subject}`);
   console.log("-------------------------------------------------------");
@@ -231,11 +323,10 @@ function wrapHtmlEmail({ title, preheader, bodyContent, ctaText, ctaLink, footer
     </div>
     <div class="content">
       ${bodyContent}
-      ${
-        ctaText && ctaLink
-          ? `<div style="text-align: center; margin: 24px 0;"><a href="${ctaLink}" class="btn" target="_blank">${ctaText}</a></div>`
-          : ""
-      }
+      ${ctaText && ctaLink
+      ? `<div style="text-align: center; margin: 24px 0;"><a href="${ctaLink}" class="btn" target="_blank">${ctaText}</a></div>`
+      : ""
+    }
       ${footerNote ? `<p style="font-size: 13px; color: #6b7280; margin-top: 24px;">${footerNote}</p>` : ""}
     </div>
     <div class="footer">
