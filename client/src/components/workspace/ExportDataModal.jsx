@@ -290,7 +290,14 @@ export default function ExportDataModal({
     >
       <div
         className="modal export-data-modal"
-        style={{ maxWidth: "620px", width: "95%" }}
+        style={{
+          maxWidth: "620px",
+          width: "95%",
+          display: "flex",
+          flexDirection: "column",
+          maxHeight: "90vh",
+          overflow: "hidden",
+        }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Modal Header */}
@@ -323,7 +330,7 @@ export default function ExportDataModal({
           </div>
         )}
 
-        <div className="modal-body" style={{ padding: "20px" }}>
+        <div className="modal-body" style={{ padding: "20px", overflowY: "auto", flex: "1 1 auto" }}>
           {/* 1. Dataset Selection Cards */}
           <div className="form-group" style={{ marginBottom: "18px" }}>
             <label style={{ display: "block", fontWeight: 700, marginBottom: "8px", fontSize: "13px" }}>
@@ -543,11 +550,14 @@ export default function ExportDataModal({
           className="modal-footer"
           style={{
             display: "flex",
+            flexWrap: "wrap",
             justifyContent: "space-between",
             alignItems: "center",
-            padding: "16px 20px",
+            gap: "10px",
+            padding: "14px 20px",
             borderTop: "1px solid var(--border-color)",
             background: "var(--card-subtle-bg, #f8fafc)",
+            flexShrink: 0,
           }}
         >
           <button
@@ -558,7 +568,7 @@ export default function ExportDataModal({
             Cancel
           </button>
 
-          <div style={{ display: "flex", gap: "8px" }}>
+          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
             <button
               type="button"
               className="btn btn-secondary"
