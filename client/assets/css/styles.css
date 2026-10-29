@@ -73,6 +73,12 @@
   /* Topbar */
   --topbar-bg: rgba(255, 255, 255, 0.94);
 
+  /* Compatibility & Semantic Aliases */
+  --card-bg: var(--surface);
+  --card-subtle-bg: var(--surface-alt);
+  --border-color: var(--border);
+  --accent-emerald: var(--primary);
+
   /* Transitions */
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
   --transition-fast: 0.15s var(--ease);
@@ -108,6 +114,12 @@
   --accent-border: rgba(234, 179, 8, 0.35);
 
   --topbar-bg: #000000;
+
+  /* Compatibility & Semantic Aliases */
+  --card-bg: var(--surface);
+  --card-subtle-bg: var(--surface-alt);
+  --border-color: var(--border);
+  --accent-emerald: var(--primary);
 
   /* Semantic Status Colors */
   --status-neutral-bg: #1a281e;
@@ -7549,4 +7561,17 @@ tr.row-selected {
   display: flex;
   gap: 12px;
   margin-top: 8px;
+}
+
+/* Dark mode secondary button hover and active states */
+[data-theme="dark"] .btn-secondary:hover:not(:disabled),
+[data-theme="dark"] button.secondary:hover:not(:disabled) {
+  background-color: var(--surface-alt) !important;
+  border-color: var(--border-focus) !important;
+  color: var(--text-main) !important;
+}
+
+[data-theme="dark"] .btn-secondary:active,
+[data-theme="dark"] button.secondary:active {
+  background-color: #202020 !important;
 }

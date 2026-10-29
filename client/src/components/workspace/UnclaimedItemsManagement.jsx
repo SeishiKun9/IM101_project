@@ -216,10 +216,10 @@ export default function UnclaimedItemsManagement({ onActionCompleted }) {
             justifyContent: "space-between",
             alignItems: "center",
             padding: "10px 16px",
-            background: "var(--card-subtle-bg, #f8fafc)",
+            background: "var(--surface-alt)",
             borderRadius: "8px",
             marginBottom: "1rem",
-            border: "1px solid var(--border-color)",
+            border: "1px solid var(--border)",
           }}
         >
           <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
@@ -301,7 +301,7 @@ export default function UnclaimedItemsManagement({ onActionCompleted }) {
                               height: "48px",
                               objectFit: "cover",
                               borderRadius: "6px",
-                              border: "1px solid var(--border-color)",
+                              border: "1px solid var(--border)",
                             }}
                           />
                         ) : (
@@ -310,7 +310,8 @@ export default function UnclaimedItemsManagement({ onActionCompleted }) {
                               width: "48px",
                               height: "48px",
                               borderRadius: "6px",
-                              background: "var(--card-subtle-bg, #f1f5f9)",
+                              background: "var(--surface-alt)",
+                              border: "1px solid var(--border)",
                               display: "flex",
                               alignItems: "center",
                               justifyContent: "center",
@@ -498,8 +499,8 @@ export default function UnclaimedItemsManagement({ onActionCompleted }) {
                   style={{
                     padding: "12px 16px",
                     borderRadius: "8px",
-                    background: "var(--card-subtle-bg, #f8fafc)",
-                    border: "1px solid var(--border-color)",
+                    background: "var(--surface-alt)",
+                    border: "1px solid var(--border)",
                     marginBottom: "16px",
                   }}
                 >
@@ -543,7 +544,7 @@ export default function UnclaimedItemsManagement({ onActionCompleted }) {
                   justifyContent: "flex-end",
                   gap: "8px",
                   padding: "14px 20px",
-                  borderTop: "1px solid var(--border-color)",
+                  borderTop: "1px solid var(--border)",
                 }}
               >
                 <button

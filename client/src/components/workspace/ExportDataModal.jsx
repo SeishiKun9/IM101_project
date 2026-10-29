@@ -345,13 +345,14 @@ export default function ExportDataModal({
                   padding: "12px",
                   cursor: "pointer",
                   borderRadius: "8px",
-                  border: dataset === "items" ? "2px solid var(--accent-emerald, #10b981)" : "1px solid var(--border-color)",
-                  background: dataset === "items" ? "rgba(16, 185, 129, 0.08)" : "var(--card-bg, #ffffff)",
+                  border: dataset === "items" ? "2px solid var(--primary, #10b981)" : "1px solid var(--border)",
+                  background: dataset === "items" ? "rgba(16, 185, 129, 0.12)" : "var(--surface)",
+                  color: "var(--text-main)",
                 }}
                 onClick={() => setDataset("items")}
               >
                 <div style={{ fontSize: "16px", marginBottom: "4px" }}>📦</div>
-                <div style={{ fontWeight: 700, fontSize: "13px" }}>Items Registry</div>
+                <div style={{ fontWeight: 700, fontSize: "13px", color: "var(--text-main)" }}>Items Registry</div>
                 <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>Lost &amp; found reports</div>
               </button>
 
@@ -363,13 +364,14 @@ export default function ExportDataModal({
                   padding: "12px",
                   cursor: "pointer",
                   borderRadius: "8px",
-                  border: dataset === "claims" ? "2px solid var(--accent-emerald, #10b981)" : "1px solid var(--border-color)",
-                  background: dataset === "claims" ? "rgba(16, 185, 129, 0.08)" : "var(--card-bg, #ffffff)",
+                  border: dataset === "claims" ? "2px solid var(--primary, #10b981)" : "1px solid var(--border)",
+                  background: dataset === "claims" ? "rgba(16, 185, 129, 0.12)" : "var(--surface)",
+                  color: "var(--text-main)",
                 }}
                 onClick={() => setDataset("claims")}
               >
                 <div style={{ fontSize: "16px", marginBottom: "4px" }}>📋</div>
-                <div style={{ fontWeight: 700, fontSize: "13px" }}>Claims &amp; Handovers</div>
+                <div style={{ fontWeight: 700, fontSize: "13px", color: "var(--text-main)" }}>Claims &amp; Handovers</div>
                 <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>Ownership verifications</div>
               </button>
 
@@ -382,13 +384,14 @@ export default function ExportDataModal({
                     padding: "12px",
                     cursor: "pointer",
                     borderRadius: "8px",
-                    border: dataset === "audit" ? "2px solid var(--accent-emerald, #10b981)" : "1px solid var(--border-color)",
-                    background: dataset === "audit" ? "rgba(16, 185, 129, 0.08)" : "var(--card-bg, #ffffff)",
+                    border: dataset === "audit" ? "2px solid var(--primary, #10b981)" : "1px solid var(--border)",
+                    background: dataset === "audit" ? "rgba(16, 185, 129, 0.12)" : "var(--surface)",
+                    color: "var(--text-main)",
                   }}
                   onClick={() => setDataset("audit")}
                 >
                   <div style={{ fontSize: "16px", marginBottom: "4px" }}>🛡️</div>
-                  <div style={{ fontWeight: 700, fontSize: "13px" }}>Audit Ledger</div>
+                  <div style={{ fontWeight: 700, fontSize: "13px", color: "var(--text-main)" }}>Audit Ledger</div>
                   <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>PostgreSQL activity logs</div>
                 </button>
               )}
@@ -430,7 +433,7 @@ export default function ExportDataModal({
                   id="export-start-date"
                   type="date"
                   className="form-control"
-                  style={{ width: "100%", padding: "7px 10px", fontSize: "13px", borderRadius: "6px", border: "1px solid var(--border-color)" }}
+                  style={{ width: "100%", padding: "7px 10px", fontSize: "13px", borderRadius: "6px", border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text-main)" }}
                   value={startDate}
                   onChange={(e) => {
                     setStartDate(e.target.value);
@@ -447,7 +450,7 @@ export default function ExportDataModal({
                   id="export-end-date"
                   type="date"
                   className="form-control"
-                  style={{ width: "100%", padding: "7px 10px", fontSize: "13px", borderRadius: "6px", border: "1px solid var(--border-color)" }}
+                  style={{ width: "100%", padding: "7px 10px", fontSize: "13px", borderRadius: "6px", border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text-main)" }}
                   value={endDate}
                   onChange={(e) => {
                     setEndDate(e.target.value);
@@ -468,7 +471,7 @@ export default function ExportDataModal({
                 <select
                   id="export-item-type"
                   className="form-control"
-                  style={{ width: "100%", padding: "7px 10px", fontSize: "13px", borderRadius: "6px", border: "1px solid var(--border-color)" }}
+                  style={{ width: "100%", padding: "7px 10px", fontSize: "13px", borderRadius: "6px", border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text-main)" }}
                   value={itemType}
                   onChange={(e) => setItemType(e.target.value)}
                 >
@@ -485,7 +488,7 @@ export default function ExportDataModal({
                 <select
                   id="export-item-status"
                   className="form-control"
-                  style={{ width: "100%", padding: "7px 10px", fontSize: "13px", borderRadius: "6px", border: "1px solid var(--border-color)" }}
+                  style={{ width: "100%", padding: "7px 10px", fontSize: "13px", borderRadius: "6px", border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text-main)" }}
                   value={itemStatus}
                   onChange={(e) => setItemStatus(e.target.value)}
                 >
@@ -509,7 +512,7 @@ export default function ExportDataModal({
               <select
                 id="export-claim-status"
                 className="form-control"
-                style={{ width: "100%", padding: "7px 10px", fontSize: "13px", borderRadius: "6px", border: "1px solid var(--border-color)" }}
+                style={{ width: "100%", padding: "7px 10px", fontSize: "13px", borderRadius: "6px", border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text-main)" }}
                 value={claimStatus}
                 onChange={(e) => setClaimStatus(e.target.value)}
               >
@@ -530,7 +533,7 @@ export default function ExportDataModal({
               <select
                 id="export-audit-action"
                 className="form-control"
-                style={{ width: "100%", padding: "7px 10px", fontSize: "13px", borderRadius: "6px", border: "1px solid var(--border-color)" }}
+                style={{ width: "100%", padding: "7px 10px", fontSize: "13px", borderRadius: "6px", border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text-main)" }}
                 value={auditAction}
                 onChange={(e) => setAuditAction(e.target.value)}
               >
@@ -555,8 +558,8 @@ export default function ExportDataModal({
             alignItems: "center",
             gap: "10px",
             padding: "14px 20px",
-            borderTop: "1px solid var(--border-color)",
-            background: "var(--card-subtle-bg, #f8fafc)",
+            borderTop: "1px solid var(--border)",
+            background: "var(--surface-alt)",
             flexShrink: 0,
           }}
         >
