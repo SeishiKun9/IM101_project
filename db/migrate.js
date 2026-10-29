@@ -465,6 +465,18 @@ export async function runMigrations(customPool = null) {
       console.warn("Migration 007 warning:", err.message);
     }
 
+    // 008: Optimized Composite & Partial Indexes
+    try {
+      const sql008Path = path.join(__dirname, "008_optimized_indexes.sql");
+      if (fs.existsSync(sql008Path)) {
+        const sql008 = fs.readFileSync(sql008Path, "utf8");
+        await client.query(sql008);
+        console.log("Migration 008 (optimized indexes) applied successfully.");
+      }
+    } catch (err) {
+      console.warn("Migration 008 warning:", err.message);
+    }
+
     // Status consistency sync for existing items with approved/claimed claims
     try {
       await client.query(`
