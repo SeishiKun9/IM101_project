@@ -2758,17 +2758,17 @@ app.get(
     }
     if (req.query.building && req.query.building !== "all") {
       values.push(req.query.building);
-      where.push(`(b.name = ${values.length} OR i.location_snapshot->>'buildingName' = ${values.length} OR l.building = ${values.length})`);
+      where.push(`(b.name = $${values.length} OR i.location_snapshot->>'buildingName' = $${values.length} OR l.building = $${values.length})`);
     }
     const startDate = req.query.startDate || req.query.start_date || req.query.from;
     const endDate = req.query.endDate || req.query.end_date || req.query.to;
     if (startDate) {
       values.push(startDate);
-      where.push(`(i.date_reported >= ${values.length}::timestamptz OR i.created_at >= ${values.length}::timestamptz)`);
+      where.push(`(i.date_reported >= $${values.length}::timestamptz OR i.created_at >= $${values.length}::timestamptz)`);
     }
     if (endDate) {
       values.push(endDate);
-      where.push(`(i.date_reported <= (${values.length}::date + INTERVAL '1 day') OR i.created_at <= (${values.length}::date + INTERVAL '1 day'))`);
+      where.push(`(i.date_reported <= ($${values.length}::date + INTERVAL '1 day') OR i.created_at <= ($${values.length}::date + INTERVAL '1 day'))`);
     }
     const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
@@ -2863,7 +2863,7 @@ app.get(
 
     if (req.query.status && req.query.status !== "all") {
       values.push(req.query.status);
-      where.push(`c.status = ${values.length}`);
+      where.push(`c.status = $${values.length}`);
     }
 
     const startDate = req.query.startDate || req.query.start_date || req.query.from;
@@ -2871,11 +2871,11 @@ app.get(
 
     if (startDate) {
       values.push(startDate);
-      where.push(`c.claim_date >= ${values.length}::timestamptz`);
+      where.push(`c.claim_date >= $${values.length}::timestamptz`);
     }
     if (endDate) {
       values.push(endDate);
-      where.push(`c.claim_date <= (${values.length}::date + INTERVAL '1 day')`);
+      where.push(`c.claim_date <= ($${values.length}::date + INTERVAL '1 day')`);
     }
 
     const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";

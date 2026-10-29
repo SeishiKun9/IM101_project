@@ -506,12 +506,12 @@ export async function getAuditLogs(pool, queryParams = {}) {
 
   if (effectiveStartDate && effectiveStartDate.trim()) {
     values.push(effectiveStartDate.trim());
-    conditions.push(`a.created_at >= ${values.length}::timestamptz`);
+    conditions.push(`a.created_at >= $${values.length}::timestamptz`);
   }
 
   if (effectiveEndDate && effectiveEndDate.trim()) {
     values.push(effectiveEndDate.trim());
-    conditions.push(`a.created_at <= (${values.length}::date + INTERVAL '1 day')`);
+    conditions.push(`a.created_at <= ($${values.length}::date + INTERVAL '1 day')`);
   }
 
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";

@@ -111,7 +111,17 @@ export default function ExportDataModal({
         let errDetail = "Could not export CSV data.";
         try {
           const json = await response.json();
-          if (json?.error) errDetail = json.error;
+          if (json?.error) {
+            // Show a friendly message instead of raw PostgreSQL internals
+            const raw = json.error;
+            if (raw.includes('cast') || raw.includes('timestamp') || raw.includes('integer')) {
+              errDetail = 'Export filter error: invalid date format. Please use the date picker to select a valid date range.';
+            } else if (raw.includes('permission') || raw.includes('denied')) {
+              errDetail = 'You do not have permission to export this dataset.';
+            } else {
+              errDetail = raw;
+            }
+          }
         } catch {}
         throw new Error(errDetail);
       }
