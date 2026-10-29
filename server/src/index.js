@@ -14,6 +14,7 @@ import { createAdminMapsRouter } from "./routes/adminMaps.js";
 import { createProfileRouter } from "./routes/profile.js";
 import { createAdminAuditRouter } from "./routes/adminAudit.js";
 import { createCampusLogoRouter } from "./routes/campusLogo.js";
+import { create2FARouter, tempLoginSessions } from "./routes/auth2fa.js";
 import {
   logAudit,
   logCreate,
@@ -470,6 +471,7 @@ function safeUser(row) {
     defaultAnonymous: Boolean(row.default_anonymous),
     defaultHidePhone: row.default_hide_phone !== false,
     themePreference: row.theme_preference || "system",
+    twoFactorEnabled: Boolean(row.two_factor_enabled),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -599,7 +601,7 @@ async function findUser(emailOrUsername) {
   const result = await pool.query(
     `SELECT user_id, username, name, email, password_hash, role, is_active,
             contact_number, default_anonymous, default_hide_phone,
-            theme_preference, created_at, updated_at
+            theme_preference, two_factor_enabled, created_at, updated_at
      FROM users
      WHERE LOWER(email) = LOWER($1) OR LOWER(username) = LOWER($1)`,
     [clean],
@@ -610,7 +612,7 @@ async function findUserById(userId) {
   const result = await pool.query(
     `SELECT user_id, username, name, email, password_hash, role, is_active,
             contact_number, default_anonymous, default_hide_phone,
-            theme_preference, created_at, updated_at
+            theme_preference, two_factor_enabled, created_at, updated_at
      FROM users
      WHERE user_id = $1`,
     [userId],
@@ -632,6 +634,19 @@ app.use(
   createLocationsRouter({ pool, asyncRoute, requireDatabase }),
 );
 app.use("/api/maps", createMapsRouter({ pool, asyncRoute, requireDatabase }));
+app.use(
+  "/api/auth/2fa",
+  create2FARouter({
+    pool,
+    asyncRoute,
+    requireDatabase,
+    requireAuth,
+    verifyPassword,
+    startSession,
+    safeUser,
+    updateSessionsForUser,
+  }),
+);
 app.use(
   "/api/admin/audit-logs",
   createAdminAuditRouter({
@@ -801,6 +816,22 @@ app.post(
       return res
         .status(403)
         .json({ error: "This account has been deactivated. Please contact an administrator." });
+    }
+
+    // Task 24: If Two-Factor Authentication is enabled, issue challenge
+    if (user.two_factor_enabled) {
+      const tempToken = crypto.randomBytes(32).toString("hex");
+      tempLoginSessions.set(tempToken, {
+        userId: user.user_id,
+        email: user.email,
+        expiresAt: Date.now() + 5 * 60 * 1000,
+      });
+
+      return res.json({
+        requires2FA: true,
+        tempToken,
+        email: user.email,
+      });
     }
 
     const session = await startSession(user, res, req);

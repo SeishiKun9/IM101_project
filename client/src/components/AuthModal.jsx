@@ -14,7 +14,10 @@ export default function AuthModal({
   onSuccess,
   onForgot,
 }) {
-  const { login, register } = useAuth();
+  const { login, register, verify2FALogin } = useAuth();
+  const [twoFactorChallenge, setTwoFactorChallenge] = useState(null);
+  const [totpCode, setTotpCode] = useState("");
+  const [useBackupCode, setUseBackupCode] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [accountType, setAccountType] = useState("client");
@@ -94,12 +97,42 @@ export default function AuthModal({
       let savedUser;
       if (mode === "signup") {
         savedUser = await register(payload);
+        onSuccess(savedUser);
       } else {
-        savedUser = await login({ email: email.trim(), password });
+        const loginRes = await login({ email: email.trim(), password });
+        if (loginRes?.requires2FA) {
+          setTwoFactorChallenge(loginRes);
+          setTotpCode("");
+          setError("");
+          return;
+        }
+        savedUser = loginRes;
+        onSuccess(savedUser);
       }
-      onSuccess(savedUser);
     } catch (requestError) {
       setError(requestError.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handle2FASubmit(event) {
+    event.preventDefault();
+    if (!totpCode.trim()) {
+      setError(useBackupCode ? "Please enter an 8-character backup recovery code." : "Please enter the 6-digit code from your authenticator app.");
+      return;
+    }
+
+    setBusy(true);
+    setError("");
+    try {
+      const savedUser = await verify2FALogin({
+        tempToken: twoFactorChallenge.tempToken,
+        code: totpCode.trim(),
+      });
+      onSuccess(savedUser);
+    } catch (err) {
+      setError(err.message || "Invalid two-factor authentication code.");
     } finally {
       setBusy(false);
     }
@@ -122,17 +155,103 @@ export default function AuthModal({
           ×
         </button>
 
-        <div className="modal-header-tag">CAMPUS ACCESS</div>
-        <h2 id="auth-modal-title" className="auth-modal-title">
-          {mode === "signup" ? "Create Campus Account" : "Sign in to Continue"}
-        </h2>
-        <p className="modal-intro">
-          Access your personal lost and found dashboard, register items, or
-          verify handover records.
-        </p>
+        {twoFactorChallenge ? (
+          <>
+            <div className="modal-header-tag">SECURITY VERIFICATION</div>
+            <h2 id="auth-modal-title" className="auth-modal-title">
+              Two-Factor Authentication
+            </h2>
+            <p className="modal-intro">
+              Enter the security code for <strong>{twoFactorChallenge.email}</strong>.
+            </p>
 
-        {/* Tab switch */}
-        <div className="auth-tabs">
+            {error && (
+              <div className="alert-banner alert-danger">
+                <strong>Authentication notice:</strong> {error}
+              </div>
+            )}
+
+            <form className="auth-form" onSubmit={handle2FASubmit} noValidate>
+              <div className="form-group" style={{ marginBottom: "16px" }}>
+                <label htmlFor="totp-code-input" style={{ display: "block", marginBottom: "6px", fontWeight: 700 }}>
+                  {useBackupCode ? "Emergency Backup Code *" : "6-Digit Authenticator Code *"}
+                </label>
+                <input
+                  id="totp-code-input"
+                  type="text"
+                  autoFocus
+                  required
+                  className="form-control"
+                  style={{
+                    fontSize: useBackupCode ? "16px" : "24px",
+                    letterSpacing: useBackupCode ? "2px" : "6px",
+                    textAlign: "center",
+                    fontWeight: 700,
+                    padding: "10px",
+                    width: "100%",
+                    background: "var(--surface)",
+                    border: "1px solid var(--border)",
+                    color: "var(--text-main)",
+                    borderRadius: "var(--radius-sm)",
+                  }}
+                  maxLength={useBackupCode ? 10 : 8}
+                  placeholder={useBackupCode ? "XXXX-XXXX" : "000000"}
+                  value={totpCode}
+                  onChange={(e) => setTotpCode(e.target.value)}
+                />
+              </div>
+
+              <div style={{ marginBottom: "16px", textAlign: "right" }}>
+                <button
+                  type="button"
+                  className="link-button"
+                  style={{ fontSize: "12.5px", color: "var(--primary)", background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}
+                  onClick={() => {
+                    setUseBackupCode(!useBackupCode);
+                    setTotpCode("");
+                    setError("");
+                  }}
+                >
+                  {useBackupCode ? "← Use 6-digit authenticator code instead" : "Lost phone? Use a backup code"}
+                </button>
+              </div>
+
+              <button
+                className="btn btn-primary btn-lg full"
+                disabled={busy}
+                type="submit"
+                style={{ width: "100%", marginBottom: "10px" }}
+              >
+                {busy ? "Verifying..." : "Verify & Sign In"}
+              </button>
+
+              <button
+                type="button"
+                className="btn btn-secondary full"
+                style={{ width: "100%" }}
+                onClick={() => {
+                  setTwoFactorChallenge(null);
+                  setTotpCode("");
+                  setError("");
+                }}
+              >
+                Cancel &amp; Back to Sign In
+              </button>
+            </form>
+          </>
+        ) : (
+          <>
+            <div className="modal-header-tag">CAMPUS ACCESS</div>
+            <h2 id="auth-modal-title" className="auth-modal-title">
+              {mode === "signup" ? "Create Campus Account" : "Sign in to Continue"}
+            </h2>
+            <p className="modal-intro">
+              Access your personal lost and found dashboard, register items, or
+              verify handover records.
+            </p>
+
+            {/* Tab switch */}
+            <div className="auth-tabs">
           <button
             className={`auth-tab ${mode === "signin" ? "active" : ""}`}
             onClick={() => {
@@ -330,6 +449,8 @@ export default function AuthModal({
                 : "Sign In"}
           </button>
         </form>
+          </>
+        )}
       </section>
     </div>
   );

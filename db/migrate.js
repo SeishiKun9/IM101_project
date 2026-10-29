@@ -182,7 +182,12 @@ export async function runMigrations(customPool = null) {
           ADD COLUMN IF NOT EXISTS theme_preference VARCHAR(10) NOT NULL DEFAULT 'light',
           ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
           ADD COLUMN IF NOT EXISTS password_reset_token_hash TEXT,
-          ADD COLUMN IF NOT EXISTS password_reset_expires_at TIMESTAMPTZ;
+          ADD COLUMN IF NOT EXISTS password_reset_expires_at TIMESTAMPTZ,
+          ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN NOT NULL DEFAULT false,
+          ADD COLUMN IF NOT EXISTS two_factor_secret TEXT,
+          ADD COLUMN IF NOT EXISTS two_factor_temp_secret TEXT,
+          ADD COLUMN IF NOT EXISTS two_factor_backup_codes JSONB,
+          ADD COLUMN IF NOT EXISTS two_factor_confirmed_at TIMESTAMPTZ;
       `);
       await client.query(`
         UPDATE users SET username = 'allen' WHERE user_id = 1 AND (username IS NULL OR username = '');
@@ -447,6 +452,17 @@ export async function runMigrations(customPool = null) {
       }
     } catch (err) {
       console.warn("Migration 006 warning:", err.message);
+    }
+
+    // 007: Two-Factor Authentication
+    try {
+      const sql007Path = path.join(__dirname, "007_two_factor_auth.sql");
+      if (fs.existsSync(sql007Path)) {
+        const sql007 = fs.readFileSync(sql007Path, "utf8");
+        await client.query(sql007);
+      }
+    } catch (err) {
+      console.warn("Migration 007 warning:", err.message);
     }
 
     // Status consistency sync for existing items with approved/claimed claims

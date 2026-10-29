@@ -6,6 +6,7 @@ import { getInitials } from "../components/UserMenu.jsx";
 import PersonalInformationForm from "../components/profile/PersonalInformationForm.jsx";
 import ChangePasswordForm from "../components/profile/ChangePasswordForm.jsx";
 import PrivacyPreferences from "../components/profile/PrivacyPreferences.jsx";
+import TwoFactorAuthSettings from "../components/profile/TwoFactorAuthSettings.jsx";
 
 export default function ProfilePage({ onRequireLogin }) {
   const { user, loading } = useAuth();
@@ -180,12 +181,15 @@ export default function ProfilePage({ onRequireLogin }) {
           )}
 
           {activeTab === "security" && (
-            <ChangePasswordForm
-              onPasswordChanged={() => {
-                // Return to login after password change session invalidation
-                if (onRequireLogin) onRequireLogin();
-              }}
-            />
+            <>
+              <ChangePasswordForm
+                onPasswordChanged={() => {
+                  // Return to login after password change session invalidation
+                  if (onRequireLogin) onRequireLogin();
+                }}
+              />
+              <TwoFactorAuthSettings />
+            </>
           )}
 
           {activeTab === "preferences" && (

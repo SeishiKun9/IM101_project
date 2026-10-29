@@ -30,6 +30,20 @@ export function AuthProvider({ children }) {
       method: "POST",
       body: JSON.stringify(credentials),
     });
+    if (result?.requires2FA) {
+      return result;
+    }
+    localStorage.setItem(tokenKey, result.token);
+    document.cookie = `campus_logged_in=true; path=/; max-age=${7 * 24 * 60 * 60}; SameSite=Lax`;
+    setUser(result.user);
+    return result.user;
+  }
+
+  async function verify2FALogin({ tempToken, code }) {
+    const result = await apiRequest("/auth/2fa/verify-login", {
+      method: "POST",
+      body: JSON.stringify({ tempToken, code }),
+    });
     localStorage.setItem(tokenKey, result.token);
     document.cookie = `campus_logged_in=true; path=/; max-age=${7 * 24 * 60 * 60}; SameSite=Lax`;
     setUser(result.user);
@@ -65,6 +79,7 @@ export function AuthProvider({ children }) {
         setUser,
         loading,
         login,
+        verify2FALogin,
         register,
         logout,
         refreshUser: checkAuth,
