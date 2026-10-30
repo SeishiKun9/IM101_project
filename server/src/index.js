@@ -59,12 +59,12 @@ const isRemoteDb =
 
 const pool = process.env.DATABASE_URL
   ? new Pool({
-      connectionString: process.env.DATABASE_URL,
-      ssl:
-        process.env.NODE_ENV === "production" || isRemoteDb
-          ? { rejectUnauthorized: false }
-          : false,
-    })
+    connectionString: process.env.DATABASE_URL,
+    ssl:
+      process.env.NODE_ENV === "production" || isRemoteDb
+        ? { rejectUnauthorized: false }
+        : false,
+  })
   : null;
 
 // Track pg_trgm extension availability for fuzzy typo search (Item 7)
@@ -81,7 +81,7 @@ if (pool) {
         .then((res) => {
           hasPgTrgm = (res.rows && res.rows.length > 0) || false;
         })
-        .catch(() => {});
+        .catch(() => { });
     });
 
   // Ensure database-backed rate limiting table exists and schedule periodic pruning (Task 22)
@@ -102,7 +102,7 @@ if (pool) {
   setInterval(() => {
     pool
       .query("DELETE FROM rate_limits WHERE expire_at < NOW()")
-      .catch(() => {});
+      .catch(() => { });
   }, 15 * 60 * 1000).unref();
 }
 
@@ -135,10 +135,10 @@ app.use(
     hsts:
       process.env.NODE_ENV === "production"
         ? {
-            maxAge: 31536000,
-            includeSubDomains: true,
-            preload: true,
-          }
+          maxAge: 31536000,
+          includeSubDomains: true,
+          preload: true,
+        }
         : false,
     referrerPolicy: { policy: "strict-origin-when-cross-origin" },
     frameguard: { action: "sameorigin" },
@@ -488,7 +488,7 @@ async function updateSessionsForUser(userId, updatedUserData) {
             "UPDATE user_sessions SET user_data = $1 WHERE session_token = $2",
             [JSON.stringify(merged), token],
           )
-          .catch(() => {});
+          .catch(() => { });
       }
     }
   }
@@ -910,6 +910,55 @@ app.post(
 );
 
 app.post(
+  "/api/auth/verify-reset-token",
+  authRateLimiter,
+  requireDatabase,
+  asyncRoute(async (req, res) => {
+    const token = String(req.body.token || "").trim();
+    if (!token) {
+      return res.status(400).json({
+        error: "A valid security reset token is required.",
+      });
+    }
+
+    const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+    const email = req.body.email
+      ? String(req.body.email).trim().toLowerCase()
+      : null;
+
+    let query =
+      "SELECT user_id, email, name FROM users WHERE password_reset_token_hash = $1 AND password_reset_expires_at > now()";
+    const params = [tokenHash];
+    if (email) {
+      query += " AND LOWER(email) = LOWER($2)";
+      params.push(email);
+    }
+
+    const result = await pool.query(query, params);
+    if (!result.rows[0]) {
+      return res.status(400).json({
+        error: email
+          ? "That reset token does not match your email or has expired."
+          : "That reset token is invalid or expired.",
+      });
+    }
+
+    const user = result.rows[0];
+    const emailParts = user.email.split("@");
+    const maskedUser =
+      emailParts[0].length > 2
+        ? `${emailParts[0].slice(0, 2)}***@${emailParts[1]}`
+        : `${emailParts[0].slice(0, 1)}***@${emailParts[1]}`;
+
+    res.json({
+      valid: true,
+      message: "Reset token verified successfully.",
+      maskedEmail: maskedUser,
+    });
+  }),
+);
+
+app.post(
   "/api/auth/reset-password",
   authRateLimiter,
   requireDatabase,
@@ -924,7 +973,7 @@ app.post(
     if (!passVal.valid) {
       return res.status(400).json({ error: passVal.error });
     }
-    const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+    const tokenHash = crypto.createHash("sha256").update(token.trim()).digest("hex");
     const result = await pool.query(
       "UPDATE users SET password_hash = $1, password_reset_token_hash = NULL, password_reset_expires_at = NULL WHERE password_reset_token_hash = $2 AND password_reset_expires_at > now() RETURNING user_id",
       [hashPassword(password), tokenHash],
@@ -938,7 +987,7 @@ app.post(
         sessions.delete(sessionToken);
     }
     if (pool) {
-      pool.query("DELETE FROM user_sessions WHERE user_id = $1", [result.rows[0].user_id]).catch(() => {});
+      pool.query("DELETE FROM user_sessions WHERE user_id = $1", [result.rows[0].user_id]).catch(() => { });
     }
     res.json({ message: "Password reset successfully. You can sign in now." });
   }),
@@ -960,7 +1009,7 @@ app.post(
     if (token) {
       sessions.delete(token);
       if (pool) {
-        pool.query("DELETE FROM user_sessions WHERE session_token = $1", [token]).catch(() => {});
+        pool.query("DELETE FROM user_sessions WHERE session_token = $1", [token]).catch(() => { });
       }
     }
     clearSessionCookies(res, req);
@@ -3709,8 +3758,8 @@ app.patch(
         targetUser.role === "staff"
           ? "verifier"
           : targetUser.role === "admin"
-          ? "administrator"
-          : "user";
+            ? "administrator"
+            : "user";
 
       await logAudit(client, {
         actor: req.user,
@@ -3872,8 +3921,8 @@ app.delete(
         targetUser.role === "staff"
           ? "verifier"
           : targetUser.role === "admin"
-          ? "administrator"
-          : "user";
+            ? "administrator"
+            : "user";
 
       await logDelete(client, {
         actor: req.user,

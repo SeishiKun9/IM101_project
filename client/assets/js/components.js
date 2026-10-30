@@ -281,6 +281,7 @@
   function ForgotPasswordModal({ onClose, onBack }) {
     const [email, setEmail] = useState("");
     const [token, setToken] = useState("");
+    const [tokenVerified, setTokenVerified] = useState(false);
     const [password, setPassword] = useState("");
     const [message, setMessage] = useState("");
     const [error, setError] = useState("");
@@ -300,17 +301,34 @@
       }
     }
 
+    async function verifyToken(event) {
+      event.preventDefault();
+      setError("");
+      try {
+        await api("/auth/verify-reset-token", {
+          method: "POST",
+          body: JSON.stringify({ token: token.trim(), email: email ? email.trim() : undefined }),
+        });
+        setTokenVerified(true);
+        setMessage("Security token matched and verified! Please enter your new password below.");
+      } catch (verifyError) {
+        setTokenVerified(false);
+        setError(verifyError.message || "That reset token is invalid or expired.");
+      }
+    }
+
     async function resetPassword(event) {
       event.preventDefault();
       setError("");
       try {
         const result = await api("/auth/reset-password", {
           method: "POST",
-          body: JSON.stringify({ token, password }),
+          body: JSON.stringify({ token: token.trim(), password }),
         });
         setMessage(result.message);
         setToken("");
         setPassword("");
+        setTokenVerified(false);
       } catch (requestError) {
         setError(requestError.message);
       }
@@ -324,33 +342,35 @@
         { className: "modal auth-modal" },
         h("button", { className: "modal-close", onClick: onClose }, "×"),
         h("p", { className: "eyebrow" }, "ACCOUNT RECOVERY"),
-        h("h2", null, "Forgot password"),
+        h("h2", null, !tokenVerified ? "Verify Security Token" : "Change Password"),
         h(
           "p",
           { className: "modal-intro" },
-          "Request a time-limited reset token for any Client, Verifier, or Administrator account.",
+          !tokenVerified
+            ? "Enter your security token. Once matched, proceed to change your password."
+            : "Token verified. Enter your new password below.",
         ),
-        h(
-          "form",
-          { className: "auth-form", onSubmit: requestReset },
-          h(
-            "label",
-            null,
-            "Account email",
-            h("input", {
-              type: "email",
-              value: email,
-              onChange: (event) => setEmail(event.target.value),
-              required: true,
-            }),
-          ),
-          h("button", { className: "primary full" }, "Request reset"),
-        ),
-        message && h("p", { className: "auth-note" }, message),
-        token &&
+        !tokenVerified &&
           h(
             "form",
-            { className: "auth-form reset-form", onSubmit: resetPassword },
+            { className: "auth-form", onSubmit: requestReset },
+            h(
+              "label",
+              null,
+              "Account email",
+              h("input", {
+                type: "email",
+                value: email,
+                onChange: (event) => setEmail(event.target.value),
+                required: true,
+              }),
+            ),
+            h("button", { className: "primary full" }, "Request reset token"),
+          ),
+        !tokenVerified &&
+          h(
+            "form",
+            { className: "auth-form reset-form", onSubmit: verifyToken },
             h(
               "label",
               null,
@@ -359,8 +379,15 @@
                 value: token,
                 onChange: (event) => setToken(event.target.value),
                 required: true,
+                placeholder: "Enter 64-character token",
               }),
             ),
+            h("button", { className: "primary full" }, "Verify Token & Proceed"),
+          ),
+        tokenVerified &&
+          h(
+            "form",
+            { className: "auth-form reset-form", onSubmit: resetPassword },
             h(
               "label",
               null,
@@ -373,8 +400,9 @@
                 required: true,
               }),
             ),
-            h("button", { className: "primary full" }, "Reset password"),
+            h("button", { className: "primary full" }, "Set New Password"),
           ),
+        message && h("p", { className: "auth-note" }, message),
         error && h("p", { className: "auth-error" }, error),
         h(
           "button",

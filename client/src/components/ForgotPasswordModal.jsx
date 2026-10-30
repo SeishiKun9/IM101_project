@@ -4,7 +4,8 @@ import PasswordRequirements from "./PasswordRequirements.jsx";
 import { validatePassword, validateSchoolEmail } from "../utils/validation.js";
 
 export default function ForgotPasswordModal({ initialToken = "", onClose, onBack }) {
-  const [step, setStep] = useState(initialToken ? "reset" : "request");
+  // Steps: "request" (enter email) | "token" (enter token) | "change_password" (actual change password)
+  const [step, setStep] = useState(initialToken ? "token" : "request");
   const [email, setEmail] = useState("");
   const [token, setToken] = useState(initialToken || "");
   const [password, setPassword] = useState("");
@@ -16,12 +17,37 @@ export default function ForgotPasswordModal({ initialToken = "", onClose, onBack
   const [dispatchStatus, setDispatchStatus] = useState(null);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [tokenVerified, setTokenVerified] = useState(false);
+  const [maskedEmail, setMaskedEmail] = useState("");
   const [resetSuccess, setResetSuccess] = useState(false);
 
   useEffect(() => {
     if (initialToken) {
-      setToken(initialToken);
-      setStep("reset");
+      const cleanToken = initialToken.trim();
+      setToken(cleanToken);
+      setStep("token");
+      setVerifying(true);
+      setError("");
+
+      apiRequest("/auth/verify-reset-token", {
+        method: "POST",
+        body: JSON.stringify({ token: cleanToken }),
+      })
+        .then((result) => {
+          setTokenVerified(true);
+          if (result.maskedEmail) setMaskedEmail(result.maskedEmail);
+          setMessage("Security reset token verified. Please enter your new password below.");
+          setStep("change_password");
+        })
+        .catch((err) => {
+          setTokenVerified(false);
+          setError(err.message || "That reset token is invalid or expired.");
+          setStep("token");
+        })
+        .finally(() => {
+          setVerifying(false);
+        });
     }
   }, [initialToken]);
 
@@ -51,11 +77,47 @@ export default function ForgotPasswordModal({ initialToken = "", onClose, onBack
       if (result.resetToken) {
         setToken(result.resetToken);
       }
-      setStep("reset");
+      setStep("token");
     } catch (requestError) {
       setError(requestError.message);
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function handleVerifyToken(event) {
+    if (event) event.preventDefault();
+    setError("");
+    setMessage("");
+
+    const cleanToken = token.trim();
+    if (!cleanToken) {
+      setError("Please enter the security reset token from your email.");
+      return;
+    }
+
+    setVerifying(true);
+    try {
+      const payload = { token: cleanToken };
+      if (email.trim()) {
+        payload.email = email.trim().toLowerCase();
+      }
+      const result = await apiRequest("/auth/verify-reset-token", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+
+      setTokenVerified(true);
+      if (result.maskedEmail) {
+        setMaskedEmail(result.maskedEmail);
+      }
+      setMessage("✓ Security token matched and verified! Please enter your new password below.");
+      setStep("change_password");
+    } catch (verifyError) {
+      setTokenVerified(false);
+      setError(verifyError.message || "That reset token is invalid or expired.");
+    } finally {
+      setVerifying(false);
     }
   }
 
@@ -66,6 +128,7 @@ export default function ForgotPasswordModal({ initialToken = "", onClose, onBack
 
     if (!token.trim()) {
       setError("Please provide the security reset token from your email.");
+      setStep("token");
       return;
     }
 
@@ -98,6 +161,21 @@ export default function ForgotPasswordModal({ initialToken = "", onClose, onBack
     }
   }
 
+  // Determine modal header tag & title based on step
+  let headerTag = "ACCOUNT RECOVERY";
+  let modalTitle = "Reset Your Password";
+  let modalIntro = "Enter your registered campus email to receive a secure password reset token.";
+
+  if (step === "token") {
+    headerTag = "STEP 1 OF 2: VERIFY TOKEN";
+    modalTitle = "Enter Reset Token";
+    modalIntro = "Enter the security reset token sent to your email. Once matched, you will proceed to change your password.";
+  } else if (step === "change_password") {
+    headerTag = "STEP 2 OF 2: CHANGE PASSWORD";
+    modalTitle = "Change Your Password";
+    modalIntro = "Your token was matched and verified. Enter your new password below.";
+  }
+
   return (
     <div
       className="modal-backdrop"
@@ -115,15 +193,87 @@ export default function ForgotPasswordModal({ initialToken = "", onClose, onBack
           ×
         </button>
 
-        <div className="modal-header-tag">ACCOUNT RECOVERY</div>
+        <div className="modal-header-tag">{headerTag}</div>
         <h2 id="forgot-modal-title" className="auth-modal-title">
-          Reset Your Password
+          {modalTitle}
         </h2>
-        <p className="modal-intro">
-          {step === "request"
-            ? "Enter your registered campus email to receive a secure password reset token."
-            : "Enter the security reset token sent to your email along with your new password."}
-        </p>
+        <p className="modal-intro">{modalIntro}</p>
+
+        {/* Step indicator for Token and Change Password steps */}
+        {!resetSuccess && (step === "token" || step === "change_password") && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "12px",
+              marginBottom: "20px",
+              padding: "8px 14px",
+              background: "rgba(0, 0, 0, 0.03)",
+              borderRadius: "10px",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+                fontSize: "12px",
+                fontWeight: step === "token" ? 700 : 500,
+                color: step === "token" ? "var(--primary)" : tokenVerified ? "var(--accent-emerald, #16a34a)" : "var(--text-muted)",
+              }}
+            >
+              <span
+                style={{
+                  width: "20px",
+                  height: "20px",
+                  borderRadius: "50%",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "11px",
+                  fontWeight: 700,
+                  background: tokenVerified ? "var(--accent-emerald, #16a34a)" : step === "token" ? "var(--primary)" : "var(--border)",
+                  color: "#ffffff",
+                }}
+              >
+                {tokenVerified ? "✓" : "1"}
+              </span>
+              <span>1. Enter Token</span>
+            </div>
+
+            <span style={{ color: "var(--border)", fontSize: "14px" }}>→</span>
+
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+                fontSize: "12px",
+                fontWeight: step === "change_password" ? 700 : 500,
+                color: step === "change_password" ? "var(--primary)" : "var(--text-muted)",
+              }}
+            >
+              <span
+                style={{
+                  width: "20px",
+                  height: "20px",
+                  borderRadius: "50%",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "11px",
+                  fontWeight: 700,
+                  background: step === "change_password" ? "var(--primary)" : "var(--border)",
+                  color: step === "change_password" ? "#ffffff" : "var(--text-muted)",
+                }}
+              >
+                2
+              </span>
+              <span>2. Change Password</span>
+            </div>
+          </div>
+        )}
 
         {message && (
           <div className="alert-banner alert-success">
@@ -150,7 +300,7 @@ export default function ForgotPasswordModal({ initialToken = "", onClose, onBack
         {resetSuccess ? (
           <div style={{ textAlign: "center", padding: "16px 0" }}>
             <p style={{ fontSize: "15px", color: "var(--text-main)", marginBottom: "20px" }}>
-              Your account password has been updated. You can now log into your account.
+              Your account password has been updated. You can now log into your account with your new password.
             </p>
             <button
               className="btn btn-primary btn-lg full"
@@ -191,7 +341,7 @@ export default function ForgotPasswordModal({ initialToken = "", onClose, onBack
                 onClick={() => {
                   setError("");
                   setMessage("");
-                  setStep("reset");
+                  setStep("token");
                 }}
                 style={{ fontSize: "13px" }}
               >
@@ -199,8 +349,8 @@ export default function ForgotPasswordModal({ initialToken = "", onClose, onBack
               </button>
             </div>
           </form>
-        ) : (
-          <form className="auth-form" onSubmit={resetPassword} noValidate>
+        ) : step === "token" ? (
+          <form className="auth-form" onSubmit={handleVerifyToken} noValidate>
             {dispatchStatus?.simulated && dispatchStatus?.resetToken && (
               <div
                 style={{
@@ -259,13 +409,78 @@ export default function ForgotPasswordModal({ initialToken = "", onClose, onBack
               <input
                 id="reset-token"
                 value={token}
-                onChange={(event) => setToken(event.target.value)}
+                onChange={(event) => {
+                  setToken(event.target.value);
+                  setError("");
+                }}
                 required
                 placeholder="Paste the reset token received via email"
+                autoFocus
               />
               <small style={{ display: "block", marginTop: "4px", color: "var(--text-muted)", fontSize: "11px" }}>
                 Check your inbox (and spam folder) for the 64-character token. Tokens expire after 15 minutes.
               </small>
+            </div>
+
+            <button
+              className="btn btn-primary btn-lg full"
+              disabled={verifying || !token.trim()}
+              type="submit"
+            >
+              {verifying ? "Verifying Token..." : "Verify Token & Proceed →"}
+            </button>
+
+            <div style={{ textAlign: "center", marginTop: "12px" }}>
+              <button
+                type="button"
+                className="link-btn"
+                onClick={() => {
+                  setError("");
+                  setMessage("");
+                  setStep("request");
+                }}
+                style={{ fontSize: "13px" }}
+              >
+                ← Request a new reset token by email
+              </button>
+            </div>
+          </form>
+        ) : (
+          /* step === "change_password" - The actual change password section */
+          <form className="auth-form" onSubmit={resetPassword} noValidate>
+            {/* Verified token indicator */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "10px 14px",
+                background: "rgba(34, 197, 94, 0.1)",
+                border: "1px solid rgba(34, 197, 94, 0.3)",
+                borderRadius: "8px",
+                marginBottom: "18px",
+                fontSize: "12px",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <span style={{ color: "var(--accent-emerald, #16a34a)", fontWeight: 700, fontSize: "14px" }}>✓</span>
+                <span style={{ color: "var(--text-main)", fontWeight: 600 }}>
+                  Reset Token Matched &amp; Verified {maskedEmail ? `(${maskedEmail})` : ""}
+                </span>
+              </div>
+              <button
+                type="button"
+                className="link-btn"
+                style={{ fontSize: "11px", color: "var(--text-muted)" }}
+                onClick={() => {
+                  setTokenVerified(false);
+                  setStep("token");
+                  setMessage("");
+                  setError("");
+                }}
+              >
+                Change Token
+              </button>
             </div>
 
             <div className="form-group">
@@ -281,6 +496,7 @@ export default function ForgotPasswordModal({ initialToken = "", onClose, onBack
                   required
                   placeholder="Choose a strong new password"
                   autoComplete="new-password"
+                  autoFocus
                 />
                 <button
                   type="button"
@@ -332,7 +548,7 @@ export default function ForgotPasswordModal({ initialToken = "", onClose, onBack
               disabled={submitting}
               type="submit"
             >
-              {submitting ? "Updating Password..." : "Set New Password"}
+              {submitting ? "Updating Password..." : "Change Password"}
             </button>
 
             <div style={{ textAlign: "center", marginTop: "12px" }}>
@@ -342,11 +558,11 @@ export default function ForgotPasswordModal({ initialToken = "", onClose, onBack
                 onClick={() => {
                   setError("");
                   setMessage("");
-                  setStep("request");
+                  setStep("token");
                 }}
                 style={{ fontSize: "13px" }}
               >
-                ← Request a new reset token by email
+                ← Back to token verification
               </button>
             </div>
           </form>
