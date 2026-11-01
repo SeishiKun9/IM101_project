@@ -9,18 +9,22 @@ CREATE TYPE item_type AS ENUM('lost', 'found');
 CREATE TYPE item_status AS ENUM(
   'reported',
   'under_review',
+  'found',
   'claimed',
+  'completed',
   'returned',
   'closed'
 );
 
-CREATE TYPE claim_status AS ENUM('pending', 'approved', 'rejected', 'released');
+CREATE TYPE claim_status AS ENUM('pending', 'approved', 'rejected', 'claimed', 'released');
 
 CREATE TABLE users (
   user_id BIGSERIAL PRIMARY KEY,
   name VARCHAR(120) NOT NULL,
   email CITEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
+  password_reset_token_hash TEXT,
+  password_reset_expires_at TIMESTAMPTZ,
   role user_role NOT NULL DEFAULT 'student',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -33,9 +37,10 @@ CREATE TABLE categories (
 
 CREATE TABLE locations (
   location_id BIGSERIAL PRIMARY KEY,
-  location_name VARCHAR(120) UNIQUE NOT NULL,
+  location_name VARCHAR(120) NOT NULL,
   building VARCHAR(100) NOT NULL,
-  floor VARCHAR(30)
+  floor VARCHAR(30),
+  UNIQUE (building, location_name, floor)
 );
 
 CREATE TABLE items (
@@ -48,6 +53,22 @@ CREATE TABLE items (
   description TEXT NOT NULL,
   date_reported DATE NOT NULL,
   status item_status NOT NULL DEFAULT 'reported',
+  reporter_name VARCHAR(120),
+  contact_phone VARCHAR(40),
+  is_anonymous BOOLEAN NOT NULL DEFAULT false,
+  hide_phone BOOLEAN NOT NULL DEFAULT true,
+  map_x NUMERIC(5, 2),
+  map_y NUMERIC(5, 2),
+  matched_lost_id BIGINT REFERENCES items (item_id) ON DELETE SET NULL,
+  matched_found_id BIGINT REFERENCES items (item_id) ON DELETE SET NULL,
+  review_lost_id BIGINT REFERENCES items (item_id) ON DELETE SET NULL,
+  finder_name VARCHAR(120),
+  found_location TEXT,
+  confirmation_date TIMESTAMPTZ,
+  matched_by BIGINT REFERENCES users (user_id) ON DELETE SET NULL,
+  verifier_notes TEXT,
+  collection_date TIMESTAMPTZ,
+  collected_by BIGINT REFERENCES users (user_id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -74,6 +95,11 @@ CREATE TABLE claims (
   claimant_id BIGINT NOT NULL REFERENCES users (user_id) ON DELETE RESTRICT,
   claim_date TIMESTAMPTZ NOT NULL DEFAULT now(),
   status claim_status NOT NULL DEFAULT 'pending',
+  reviewed_by BIGINT REFERENCES users (user_id) ON DELETE SET NULL,
+  reviewed_at TIMESTAMPTZ,
+  rejection_reason TEXT,
+  collection_date TIMESTAMPTZ,
+  collected_by BIGINT REFERENCES users (user_id) ON DELETE SET NULL,
   UNIQUE (item_id, claimant_id)
 );
 
@@ -81,7 +107,6 @@ CREATE TABLE ownership_proofs (
   proof_id BIGSERIAL PRIMARY KEY,
   claim_id BIGINT NOT NULL REFERENCES claims (claim_id) ON DELETE CASCADE,
   proof_type VARCHAR(60) NOT NULL,
-  proof_details TEXT NOT NULL,
   submitted_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

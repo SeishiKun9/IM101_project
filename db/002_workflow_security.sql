@@ -1,0 +1,40 @@
+-- Apply this migration to an existing database after 001_init.sql.
+ALTER TYPE item_status ADD VALUE IF NOT EXISTS 'found';
+ALTER TYPE item_status ADD VALUE IF NOT EXISTS 'completed';
+ALTER TYPE claim_status ADD VALUE IF NOT EXISTS 'claimed';
+
+ALTER TABLE items ADD COLUMN IF NOT EXISTS reporter_name VARCHAR(120);
+ALTER TABLE items ADD COLUMN IF NOT EXISTS contact_phone VARCHAR(40);
+ALTER TABLE items ADD COLUMN IF NOT EXISTS is_anonymous BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS hide_phone BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS map_x NUMERIC(5, 2);
+ALTER TABLE items ADD COLUMN IF NOT EXISTS map_y NUMERIC(5, 2);
+ALTER TABLE items ADD COLUMN IF NOT EXISTS matched_lost_id BIGINT REFERENCES items (item_id) ON DELETE SET NULL;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS matched_found_id BIGINT REFERENCES items (item_id) ON DELETE SET NULL;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS review_lost_id BIGINT REFERENCES items (item_id) ON DELETE SET NULL;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS finder_name VARCHAR(120);
+ALTER TABLE items ADD COLUMN IF NOT EXISTS found_location TEXT;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS confirmation_date TIMESTAMPTZ;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS matched_by BIGINT REFERENCES users (user_id) ON DELETE SET NULL;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS verifier_notes TEXT;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS collection_date TIMESTAMPTZ;
+ALTER TABLE items ADD COLUMN IF NOT EXISTS collected_by BIGINT REFERENCES users (user_id) ON DELETE SET NULL;
+
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS reviewed_by BIGINT REFERENCES users (user_id) ON DELETE SET NULL;
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ;
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS collection_date TIMESTAMPTZ;
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS collected_by BIGINT REFERENCES users (user_id) ON DELETE SET NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_token_hash TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_expires_at TIMESTAMPTZ;
+
+ALTER TABLE locations DROP CONSTRAINT IF EXISTS locations_location_name_key;
+DO $$
+BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_constraint WHERE conname = 'locations_building_location_floor_key'
+	) THEN
+		ALTER TABLE locations ADD CONSTRAINT locations_building_location_floor_key
+			UNIQUE (building, location_name, floor);
+	END IF;
+END $$;
