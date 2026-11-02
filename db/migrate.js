@@ -214,7 +214,25 @@ export async function runMigrations(customPool = null) {
         INSERT INTO campus_logo (logo_id, logo_name, image_path, created_at, updated_at)
         VALUES (1, 'Campus Main Logo', '/assets/img/campus-logo.svg', now(), now())
         ON CONFLICT (logo_id) DO NOTHING;
+        ALTER TABLE campus_logo ADD COLUMN IF NOT EXISTS image_data TEXT;
       `);
+
+      // Backfill persistent image_data if logo file exists on disk
+      const currentLogoRes = await client.query("SELECT logo_id, image_path, image_data, mime_type FROM campus_logo WHERE logo_id = 1");
+      const currentLogo = currentLogoRes.rows[0];
+      if (currentLogo && !currentLogo.image_data && currentLogo.image_path) {
+        let candidatePath = currentLogo.image_path.startsWith("/")
+          ? path.join(__dirname, "..", currentLogo.image_path.slice(1))
+          : path.join(__dirname, "..", currentLogo.image_path);
+        
+        if (fs.existsSync(candidatePath)) {
+          const fileBuf = fs.readFileSync(candidatePath);
+          const mime = currentLogo.mime_type || (candidatePath.endsWith(".svg") ? "image/svg+xml" : "image/png");
+          const dataUrl = `data:${mime};base64,${fileBuf.toString("base64")}`;
+          await client.query("UPDATE campus_logo SET image_data = $1 WHERE logo_id = 1", [dataUrl]);
+          console.log("Backfilled persistent image_data for campus logo from", candidatePath);
+        }
+      }
     } catch (logoErr) {
       console.error("Error setting up campus_logo:", logoErr.message);
     }
@@ -475,6 +493,18 @@ export async function runMigrations(customPool = null) {
       }
     } catch (err) {
       console.warn("Migration 008 warning:", err.message);
+    }
+
+    // 009: Persist Campus Logo and Fix User FK Restrict
+    try {
+      const sql009Path = path.join(__dirname, "009_persist_logo_and_fix_user_fkey.sql");
+      if (fs.existsSync(sql009Path)) {
+        const sql009 = fs.readFileSync(sql009Path, "utf8");
+        await client.query(sql009);
+        console.log("Migration 009 (persist logo and fix user FK) applied successfully.");
+      }
+    } catch (err) {
+      console.warn("Migration 009 warning:", err.message);
     }
 
     // Status consistency sync for existing items with approved/claimed claims

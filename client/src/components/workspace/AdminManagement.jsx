@@ -4,11 +4,94 @@ import { statusText } from "../../constants/statuses.js";
 import { useAuth } from "../../context/AuthContext.jsx";
 import EditAccountModal from "./EditAccountModal.jsx";
 
+function formatLastSeen(dateStr, isOnline) {
+  if (isOnline) return "Active Now";
+  if (!dateStr) return "Offline";
+  const diffMs = Date.now() - new Date(dateStr).getTime();
+  const diffMins = Math.floor(diffMs / (1000 * 60));
+  if (diffMins < 1) return "Just now";
+  if (diffMins < 60) return `${diffMins}m ago`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return new Date(dateStr).toLocaleDateString();
+}
+
+function PresenceBadge({ isOnline, lastActiveAt }) {
+  if (isOnline) {
+    return (
+      <span
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: "5px",
+          padding: "2px 8px",
+          borderRadius: "12px",
+          fontSize: "11px",
+          fontWeight: 700,
+          background: "rgba(16, 185, 129, 0.12)",
+          color: "#10b981",
+          border: "1px solid rgba(16, 185, 129, 0.3)",
+          whiteSpace: "nowrap",
+        }}
+        title="User is currently signed in and active on the system"
+      >
+        <span
+          style={{
+            width: "7px",
+            height: "7px",
+            borderRadius: "50%",
+            background: "#10b981",
+            boxShadow: "0 0 6px #10b981",
+          }}
+        />
+        Active Now
+      </span>
+    );
+  }
+
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "5px",
+        padding: "2px 8px",
+        borderRadius: "12px",
+        fontSize: "11px",
+        fontWeight: 600,
+        background: "var(--surface-alt, rgba(148, 163, 184, 0.1))",
+        color: "var(--text-muted, #64748b)",
+        border: "1px solid var(--border, rgba(148, 163, 184, 0.25))",
+        whiteSpace: "nowrap",
+      }}
+      title={lastActiveAt ? `Last active: ${new Date(lastActiveAt).toLocaleString()}` : "User is currently offline"}
+    >
+      <span
+        style={{
+          width: "6px",
+          height: "6px",
+          borderRadius: "50%",
+          background: "#94a3b8",
+        }}
+      />
+      Offline
+      {lastActiveAt && (
+        <span style={{ fontSize: "10px", opacity: 0.8, marginLeft: "2px" }}>
+          • {formatLastSeen(lastActiveAt, false)}
+        </span>
+      )}
+    </span>
+  );
+}
+
 export default function AdminManagement() {
   const { user: currentUser } = useAuth();
   const [users, setUsers] = useState([]);
   const [items, setItems] = useState([]);
   const [studentSearch, setStudentSearch] = useState("");
+  const [presenceFilter, setPresenceFilter] = useState("all");
   const [reportSearch, setReportSearch] = useState("");
   const [editingUser, setEditingUser] = useState(null);
   const [message, setMessage] = useState("");
@@ -73,13 +156,25 @@ export default function AdminManagement() {
   const safeUsers = Array.isArray(users) ? users : [];
   const safeItems = Array.isArray(items) ? items : [];
 
+  const onlineCount = safeUsers.filter((u) => u.isOnline).length;
+  const offlineCount = safeUsers.length - onlineCount;
+
+  const matchesPresence = (u) => {
+    if (presenceFilter === "online") return !!u.isOnline;
+    if (presenceFilter === "offline") return !u.isOnline;
+    return true;
+  };
+
   const staffUsers = safeUsers.filter((u) => u.role === "staff");
   const studentUsers = safeUsers.filter(
     (u) => u.role === "student" || (!["staff", "admin"].includes(u.role)),
   );
   const adminUsers = safeUsers.filter((u) => u.role === "admin");
 
+  const filteredStaff = staffUsers.filter(matchesPresence);
+  const filteredAdmins = adminUsers.filter(matchesPresence);
   const filteredStudents = studentUsers.filter((u) => {
+    if (!matchesPresence(u)) return false;
     if (!studentSearch.trim()) return true;
     const q = studentSearch.toLowerCase();
     return (
@@ -126,6 +221,57 @@ export default function AdminManagement() {
       <div className="admin-split-columns">
         {/* Column 1: Account Control (Verifiers, Users Below, and Admins) */}
         <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+          {/* Presence Quick Filter Bar */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "10px",
+              flexWrap: "wrap",
+              padding: "10px 14px",
+              borderRadius: "8px",
+              background: "var(--surface, #ffffff)",
+              border: "1px solid var(--border)",
+              boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+              <span style={{ fontSize: "11px", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                Presence Filter:
+              </span>
+              <div style={{ display: "inline-flex", gap: "4px" }}>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${presenceFilter === "all" ? "btn-primary" : "btn-secondary"}`}
+                  onClick={() => setPresenceFilter("all")}
+                  style={{ fontSize: "11px", padding: "4px 10px" }}
+                >
+                  All Users ({safeUsers.length})
+                </button>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${presenceFilter === "online" ? "btn-primary" : "btn-secondary"}`}
+                  onClick={() => setPresenceFilter("online")}
+                  style={{ fontSize: "11px", padding: "4px 10px", display: "inline-flex", alignItems: "center", gap: "5px" }}
+                >
+                  <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#10b981", boxShadow: "0 0 5px #10b981" }} />
+                  Active Now ({onlineCount})
+                </button>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${presenceFilter === "offline" ? "btn-primary" : "btn-secondary"}`}
+                  onClick={() => setPresenceFilter("offline")}
+                  style={{ fontSize: "11px", padding: "4px 10px" }}
+                >
+                  Offline ({offlineCount})
+                </button>
+              </div>
+            </div>
+            <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>
+              <strong style={{ color: onlineCount > 0 ? "#10b981" : "inherit" }}>{onlineCount}</strong> active online
+            </div>
+          </div>
           {/* Category 1: Active Verifiers */}
           <div className="admin-subpanel">
             <div className="subpanel-header">
@@ -142,12 +288,13 @@ export default function AdminManagement() {
                   <thead>
                     <tr>
                       <th>Name &amp; Email</th>
+                      <th style={{ width: "105px" }}>Presence</th>
                       <th style={{ width: "95px" }}>Status</th>
                       <th className="text-right">Action</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {staffUsers.map((u) => {
+                    {filteredStaff.map((u) => {
                       const isSelf =
                         currentUser &&
                         (String(currentUser.id) === String(u.id) ||
@@ -157,6 +304,9 @@ export default function AdminManagement() {
                           <td>
                             <strong>{u.name}</strong>
                             <small className="table-subtext">{u.email}</small>
+                          </td>
+                          <td>
+                            <PresenceBadge isOnline={u.isOnline} lastActiveAt={u.lastActiveAt} />
                           </td>
                           <td>
                             <span
@@ -264,7 +414,8 @@ export default function AdminManagement() {
                   <thead>
                     <tr>
                       <th>Name &amp; Email</th>
-                      <th style={{ width: "80px" }}>Role</th>
+                      <th style={{ width: "75px" }}>Role</th>
+                      <th style={{ width: "105px" }}>Presence</th>
                       <th style={{ width: "95px" }}>Status</th>
                       <th className="text-right">Action</th>
                     </tr>
@@ -298,6 +449,9 @@ export default function AdminManagement() {
                               >
                                 {u.role || "student"}
                               </span>
+                            </td>
+                            <td>
+                              <PresenceBadge isOnline={u.isOnline} lastActiveAt={u.lastActiveAt} />
                             </td>
                             <td>
                               <span
@@ -354,7 +508,7 @@ export default function AdminManagement() {
                     ) : (
                       <tr>
                         <td
-                          colSpan={4}
+                          colSpan={5}
                           style={{
                             textAlign: "center",
                             color: "var(--text-muted)",
@@ -393,12 +547,13 @@ export default function AdminManagement() {
                   <thead>
                     <tr>
                       <th>Name &amp; Email</th>
+                      <th style={{ width: "105px" }}>Presence</th>
                       <th style={{ width: "95px" }}>Status</th>
                       <th className="text-right">Action</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {adminUsers.map((u) => {
+                    {filteredAdmins.map((u) => {
                       const isSelf =
                         currentUser &&
                         (String(currentUser.id) === String(u.id) ||
@@ -432,6 +587,9 @@ export default function AdminManagement() {
                               )}
                             </div>
                             <small className="table-subtext">{u.email}</small>
+                          </td>
+                          <td>
+                            <PresenceBadge isOnline={u.isOnline} lastActiveAt={u.lastActiveAt} />
                           </td>
                           <td>
                             <span

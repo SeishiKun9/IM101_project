@@ -420,6 +420,8 @@ async function getSession(token) {
   return null;
 }
 
+const lastActiveThrottle = new Map();
+
 async function requireAuth(req, res, next) {
   const token = tokenFrom(req);
   if (!token) {
@@ -430,6 +432,18 @@ async function requireAuth(req, res, next) {
     return res.status(401).json({ error: "Please sign in to continue." });
   }
   req.user = user;
+
+  // Track real-time online presence (throttled to at most once per 60s per user)
+  const uid = user.id || user.user_id;
+  if (uid && pool) {
+    const now = Date.now();
+    const last = lastActiveThrottle.get(String(uid)) || 0;
+    if (now - last > 60000) {
+      lastActiveThrottle.set(String(uid), now);
+      pool.query("UPDATE users SET last_active_at = now() WHERE user_id = $1", [uid]).catch(() => {});
+    }
+  }
+
   next();
 }
 
@@ -3658,7 +3672,24 @@ app.get(
   requireRole("admin"),
   asyncRoute(async (req, res) => {
     const result = await pool.query(
-      "SELECT user_id AS id, name, email, role, is_active AS \"isActive\", created_at AS \"createdAt\" FROM users ORDER BY created_at DESC",
+      `SELECT u.user_id AS id,
+              u.name,
+              u.email,
+              u.role,
+              u.is_active AS "isActive",
+              u.created_at AS "createdAt",
+              u.last_active_at AS "lastActiveAt",
+              CASE
+                WHEN EXISTS (
+                  SELECT 1 FROM user_sessions s
+                  WHERE s.user_id = u.user_id
+                    AND s.expires_at > now()
+                ) AND (u.last_active_at IS NOT NULL AND u.last_active_at >= now() - INTERVAL '15 minutes')
+                THEN true
+                ELSE false
+              END AS "isOnline"
+       FROM users u
+       ORDER BY u.created_at DESC`,
     );
     res.json(result.rows);
   }),
@@ -3856,6 +3887,23 @@ app.delete(
         await client.query("ROLLBACK");
         return res.status(404).json({ error: "User account not found." });
       }
+
+      // Safely decouple or clean up foreign key references before deleting user:
+      // Reported items are preserved in the catalog with reporter_name, reporter_id is set to NULL
+      await client.query("UPDATE items SET reporter_id = NULL WHERE reporter_id = $1", [req.params.userId]);
+      await client.query("UPDATE items SET matched_by = NULL WHERE matched_by = $1", [req.params.userId]);
+      await client.query("UPDATE items SET collected_by = NULL WHERE collected_by = $1", [req.params.userId]);
+      await client.query("UPDATE items SET disposition_by = NULL WHERE disposition_by = $1", [req.params.userId]);
+      await client.query("UPDATE item_status_log SET changed_by = NULL WHERE changed_by = $1", [req.params.userId]);
+      await client.query("UPDATE verifications SET staff_id = NULL WHERE staff_id = $1", [req.params.userId]);
+      await client.query("UPDATE campus_maps SET uploaded_by = NULL WHERE uploaded_by = $1", [req.params.userId]);
+      await client.query("UPDATE campus_logo SET updated_by = NULL WHERE updated_by = $1", [req.params.userId]);
+
+      // Remove dependent claims, notifications, and active sessions for the user
+      await client.query("DELETE FROM claims WHERE claimant_id = $1", [req.params.userId]);
+      await client.query("DELETE FROM claim_messages WHERE sender_id = $1", [req.params.userId]);
+      await client.query("DELETE FROM notifications WHERE user_id = $1", [req.params.userId]);
+      await client.query("DELETE FROM user_sessions WHERE user_id = $1", [req.params.userId]);
 
       const result = await client.query(
         "DELETE FROM users WHERE user_id = $1 RETURNING user_id",
